@@ -11,19 +11,26 @@ require(rgee)
 #' @return A raster with 19 biovariable layers for the world.
 #' @export
 get_biovars_global <- function(path) {
-  fn <- paste0(path, "Original/wc2.1_30s_bio/wc2.1_30s_bio.tif")
-  if (!file.exists(fn)) {
+  fn <- paste0(path, "Original/wc2.1_30s_bio/wc2.1_30s_bio_", 1:19, ".tif")
+  if (!all(file.exists(fn))) {
     biovars <- geodata::worldclim_global(
       var = "bio", res = 0.5,
       path = tempdir()
     )
     dir.create(paste0(path, "Original/wc2.1_30s_bio"), showWarnings = FALSE)
-    terra::writeRaster(biovars,
-      overwrite = TRUE, gdal = "COMPRESS=ZSTD",
-      filename = fn, datatype = "FLT4S"
-    )
+    # Write each layer to file
+    lapply(1:terra::nlyr(biovars), function(x) {
+      terra::writeRaster(biovars[[x]],
+        overwrite = TRUE, gdal = "COMPRESS=ZSTD",
+        filename = paste0(
+          path, "Original/wc2.1_30s_bio/",
+          names(biovars)[x], ".tif"
+        ),
+        datatype = "FLT4S"
+      )
+    })
   } else {
-    biovars <- terra::rast(fn)
+    biovars <- lapply(fn, terra::rast)
   }
   return(biovars)
 }
@@ -33,27 +40,33 @@ get_biovars_global <- function(path) {
 #' @return A raster with 19 biovariable layers for CONUS.
 #' @export
 get_biovars_conus <- function(path) {
-  fn <- paste0(path, "Original/BioClimComposite/BioClimComposite_1971_2000_400m.tif") # nolint: line_length_linter.
-  if (!file.exists(fn)) {
+  bio_names <- c(paste0("bio", 1:4), "bio4a", paste0("bio", 5:19))
+  fn <- paste0(path, "Original/BioClimComposite/BioClimComposite_1971_2000_400m_",
+                bio_names, ".tif") # nolint: line_length_linter.
+  if (!all(file.exists(fn))) {
     sbtools::item_file_download(
       sb_id = "4ff32906e4b0e183ef5a2f16", dest_dir =
-        tempdir(), names =
-        "BioClimComposite_1971_2000_400m.tif",
-      destinations = paste0(tempdir(), "BioClimComposite_1971_2000_400m.tif"), # nolint: line_length_linter.
+      tempdir(), names = "BioClimComposite_1971_2000_400m.tif", # nolint
+      destinations = paste0(tempdir(), "BioClimComposite_1971_2000_400m.tif"),
       overwrite_file = TRUE
     )
     biovars <- terra::rast(paste0(
       tempdir(),
-      "BioClimComposite_1971_2000_400m.tif"
+      "BioClimComposite_1971_2000_400m.tif" # nolint
     ))
     names(biovars) <- c(paste0("bio", 1:4), "bio4a", paste0("bio", 5:19))
     dir.create(paste0(path, "Original/BioClimComposite"), showWarnings = FALSE)
-    terra::writeRaster(biovars,
-      overwrite = TRUE, gdal = "COMPRESS=ZSTD",
-      filename = fn, datatype = "FLT4S"
-    )
+    # Write each layer to file
+    lapply(1:terra::nlyr(biovars), function(x) {
+      terra::writeRaster(biovars[[x]],
+        overwrite = TRUE, gdal = "COMPRESS=ZSTD",
+        filename = paste0(path, "Original/BioClimComposite/BioClimComposite_1971_2000_400m_", # nolint: line_length_linter.
+                          names(biovars)[x], ".tif"),
+        datatype = "FLT4S"
+      )
+    })
   } else {
-    biovars <- terra::rast(fn)
+    biovars <- lapply(fn, terra::rast)
   }
   return(biovars)
 }
@@ -125,7 +138,8 @@ get_topo_global <- function(path) {
       overwrite = TRUE, gdal = "COMPRESS=ZSTD",
       filename = fn, datatype = "INT2S"
     )
-    shd <- get_hillshade(path = paste0(path, "Raster/Global/wc2.1_30s_"), elevation)
+    shd <- get_hillshade(path = paste0(path, "Raster/Global/wc2.1_30s_"),
+                         elevation)
     topo <- list(elevation, shd)
   } else {
     topo <- list(terra::rast(fn[1]), terra::rast(fn[2]))
@@ -233,82 +247,68 @@ get_landcover_global <- function(path) {
   return(landcover)
 }
 
+path <- "C:/Users/blaginh/Desktop/Data/"
+
 #' @description Function to obtain landcover data for CONUS (30m NLCD)
 #' @param path A character string specifying the path to write the landcover
+#' @return A list with landcover rasters: built, deciduous, evergreen, trees,
+#' shrubs, grass, pasture, cropland, cultivated, wetland.
+#' @export
 get_landcover_conus <- function(path) {
   options(timeout = 60 * 5)
   fn <- paste0(path, "Original/nlcd/nlcd_2021_land_cover_l48_20230630.tif")
   if (!file.exists(fn)) {
-    url <- "https://s3-us-west-2.amazonaws.com/mrlc/nlcd_2021_land_cover_l48_20230630.zip"
+    url <- "https://s3-us-west-2.amazonaws.com/mrlc/nlcd_2021_land_cover_l48_20230630.zip" # nolint: line_length_linter.
     # Download zip file
-    download.file(url, destfile = paste0(tempdir(), "/", basename(url)), mode = "wb")
-    unzip(paste0(tempdir(), "/", basename(url)), exdir = paste0(tempdir(), "/nlcd"))
+    download.file(url, destfile = paste0(tempdir(), "/", basename(url)),
+                  mode = "wb")
+    unzip(paste0(tempdir(), "/", basename(url)), exdir = paste0(tempdir(),
+                                                                "/nlcd"))
     # Read in raster
-    landcover <- terra::rast(paste0(tempdir(), "/nlcd/nlcd_2021_land_cover_l48_20230630.img"))
-    dir.create(paste0(path, "Original/nlcd"), showWarnings = FALSE, recursive = TRUE)
+    landcover <- terra::rast(paste0(tempdir(), "/nlcd/nlcd_2021_land_cover_l48_20230630.img")) # nolint: line_length_linter.
+    
+    dir.create(paste0(path, "Original/nlcd"), showWarnings = FALSE,
+               recursive = TRUE)
     terra::writeRaster(landcover,
       overwrite = TRUE, gdal = "COMPRESS=ZSTD",
       filename = fn, datatype = "INT1U"
     )
-    # Built codes 0-20 are 0, 21-24 are 1, and 25-255 are 0
-    built <- rbind(c(0, 20, 0), c(21, 24, 1), c(25, 255, 0))
-    # Decid codes 0-40 are 0, 41 is 1, 42 is 0, and 43 is 1, and 44-255 are 0
-    decid <- rbind(c(0, 40, 0), c(41, 41, 1), c(42, 42, 0), c(43, 43, 1), c(44, 255, 0))
-    # Everg codes 0-41 are 0, 42-43 are 1, and 44-255 are 0
-    everg <- rbind(c(0, 41, 0), c(42, 43, 1), c(44, 255, 0))
-    # Trees codes 0-40 are 0, 41-43 are 1, and 44-255 are 0
-    trees <- rbind(c(0, 40, 0), c(41, 43, 1), c(44, 255, 0))
-    # Shrub codes 0-51 are 0, 52 is 1, and 53-255 are 0
-    shrub <- rbind(c(0, 51, 0), c(52, 52, 1), c(53, 255, 0))
-    # Grass codes 0-70 are 0, 71 is 1, and 72-255 are 0
-    grass <- rbind(c(0, 70, 0), c(71, 71, 1), c(72, 255, 0))
-    # Pasure codes 0-80 are 0, 81 is 1, and 82-255 are 0
-    pastr <- rbind(c(0, 80, 0), c(81, 81, 1), c(82, 255, 0))
-    #Cropland codes 0-81 are 0, 82 is 1, and 83-255 are 0
-    cropl <- rbind(c(0, 81, 0), c(82, 82, 1), c(83, 255, 0))
-    # Cultivated codes 0-80 are 0, 81-82 is 1, and 83-255 are 0
-    culti <- rbind(c(0, 80, 0), c(81, 82, 1), c(83, 255, 0))
-    # Wetland codes 0-89 are 0, 90-95 is 1, and 96-255 are 0
-    wetld <- rbind(c(0, 89, 0), c(90, 95, 1), c(96, 255, 0))
-
-    # Reclassify landcover
-    built <- terra::classify(landcover, built, 
-    filename = paste0(path, "Raster/USA/nlcd_2021_land_cover_l48_built.tif"), 
-    wopt = list(datatype = "INT1U", gdal = "COMPRESS=ZSTD", overwrite = TRUE))
-    decid <- terra::classify(landcover, decid,
-    filename = paste0(path, "Raster/USA/nlcd_2021_land_cover_l48_decid.tif"),
-    wopt = list(datatype = "INT1U", gdal = "COMPRESS=ZSTD", overwrite = TRUE))
-    everg <- terra::classify(landcover, everg,
-    filename = paste0(path, "Raster/USA/nlcd_2021_land_cover_l48_everg.tif"),
-    wopt = list(datatype = "INT1U", gdal = "COMPRESS=ZSTD", overwrite = TRUE))
-    trees <- terra::classify(landcover, trees,
-    filename = paste0(path, "Raster/USA/nlcd_2021_land_cover_l48_trees.tif"),
-    wopt = list(datatype = "INT1U", gdal = "COMPRESS=ZSTD", overwrite = TRUE))
-    shrub <- terra::classify(landcover, shrub,
-    filename = paste0(path, "Raster/USA/nlcd_2021_land_cover_l48_shrub.tif"),
-    wopt = list(datatype = "INT1U", gdal = "COMPRESS=ZSTD", overwrite = TRUE))
-    grass <- terra::classify(landcover, grass,
-    filename = paste0(path, "Raster/USA/nlcd_2021_land_cover_l48_grass.tif"),
-    wopt = list(datatype = "INT1U", gdal = "COMPRESS=ZSTD", overwrite = TRUE))
-    pastr <- terra::classify(landcover, pastr,
-    filename = paste0(path, "Raster/USA/nlcd_2021_land_cover_l48_pastr.tif"),
-    wopt = list(datatype = "INT1U", gdal = "COMPRESS=ZSTD", overwrite = TRUE))
-    cropl <- terra::classify(landcover, cropl,
-    filename = paste0(path, "Raster/USA/nlcd_2021_land_cover_l48_cropl.tif"),
-    wopt = list(datatype = "INT1U", gdal = "COMPRESS=ZSTD", overwrite = TRUE))
-    culti <- terra::classify(landcover, culti,
-    filename = paste0(path, "Raster/USA/nlcd_2021_land_cover_l48_culti.tif"),
-    wopt = list(datatype = "INT1U", gdal = "COMPRESS=ZSTD", overwrite = TRUE))
-    wetld <- terra::classify(landcover, wetld,
-    filename = paste0(path, "Raster/USA/nlcd_2021_land_cover_l48_wetld.tif"),
-    wopt = list(datatype = "INT1U", gdal = "COMPRESS=ZSTD", overwrite = TRUE))
     
-  
+    # Define landcover types and corresponding reclassification rules
+    landcover_types <- c("built", "decid", "everg", "trees", "shrub", "grass",
+                         "pastr", "cropl", "culti", "wetld")
+    reclass_rules <- list(
+      built = rbind(c(1, 20, 0), c(21, 24, 1), c(25, 255, 0)), #21, 22, 23, 24
+      decid = rbind(c(1, 40, 0), c(41, 41, 1), c(42, 42, 0),
+                    c(43, 43, 1), c(44, 255, 0)), #41, 43
+      everg = rbind(c(1, 41, 0), c(42, 43, 1), c(44, 255, 0)), #42, 43
+      trees = rbind(c(1, 40, 0), c(41, 43, 1), c(44, 255, 0)), #41, 42, 43
+      shrub = rbind(c(1, 51, 0), c(52, 52, 1), c(53, 255, 0)), #52
+      grass = rbind(c(1, 70, 0), c(71, 71, 1), c(72, 255, 0)), #71
+      pastr = rbind(c(1, 80, 0), c(81, 81, 1), c(82, 255, 0)), #81
+      cropl = rbind(c(1, 81, 0), c(82, 82, 1), c(83, 255, 0)), #82
+      culti = rbind(c(1, 80, 0), c(81, 82, 1), c(83, 255, 0)), #81, 82
+      wetld = rbind(c(1, 89, 0), c(90, 90, 1), c(91, 94, 0), c(95, 95, 1),
+                    c(96, 255, 0)) #90, 95
+    )
+    # Perform landcover classification and file writing
+    for (type in landcover_types) {
+      reclass_rule <- reclass_rules[[type]]
+      output_file <- paste0(path, "Raster/USA/nlcd_2021_land_cover_l48_", type,
+                            ".tif")
+      r <- terra::classify(landcover, reclass_rule, right = NA, others = NA)
+      names(r) <- type
+      terra::writeRaster(r,
+        overwrite = TRUE, gdal = "COMPRESS=ZSTD",
+        filename = output_file, datatype = "INT1U"
+      )
+    }
   } else {
-    landcover <- terra::rast(fn)
+    landcover <- lapply(fn, terra::rast)
   }
   return(landcover)
 }
+path <- "C:/Users/blaginh/Desktop/Data/"
 
 #' @description Function to obtain monthly tavg  for the world (worldclim 30s)
 #' and then calculate growing degree days.
@@ -373,10 +373,13 @@ get_prectiming_global <- function(path) {
   }
   return(precip)
 }
-#' @description Function to download human pop. density for the world (30s GHS_POP_E2020_GLOBE)
-#' @param path A character string specifying the path to write the population data
+#' @description Function to download human pop. density for the world
+#' (30s GHS_POP_E2020_GLOBE)
+#' @param path A character string specifying the path to write the 
+#' population data
 #' @return A raster with human population density for the world.
 #' @export
+
 get_pop_global <- function(path) {
   fn <- paste0(path, "Original/gpw_v4_population_density/gpw_v4_population_density_rev11_2020_30s.tif") # nolint: line_length_linter.
   if (!file.exists(fn)) {
@@ -405,21 +408,21 @@ processNetworks <- function(user, lines, domain, type) {
   lines <- lines[, 1]
   # Split into 1200 chunks if type == rails, else split into 3000 chunks
   if (type == "rails") {
-    lines <- split(lines, ceiling(1:nrow(lines) / 1200))
+    lines <- split(lines, ceiling(1:nrow(lines) / 1200)) #nolint
   } else {
-    lines <- split(lines, ceiling(1:nrow(lines) / 3000))
+    lines <- split(lines, ceiling(1:nrow(lines) / 3000)) #nolint
   }
   # Create rgee folder in assets
   asset <- ee_get_assethome()
   ee_manage_create(paste0(asset, "/rgee/"))
   # Merge the assets
-  assetIds <- paste0(asset, "/rgee/", type, "_", 1:length(lines))
+  assetids <- paste0(asset, "/rgee/", type, "_", 1:length(lines)) #nolint
   # Convert sf to ee$FeatureCollection
-  convertedLines <- lapply(seq_along(lines), function(x) {
+  lapply(seq_along(lines), function(x) {
     sf_as_ee(
       x = lines[[x]],
       via = "getInfo_to_asset",
-      assetId = assetIds[x],
+      assetId = assetids[x],
       overwrite = TRUE,
       monitoring = TRUE,
       proj = "EPSG:4326"
@@ -484,16 +487,14 @@ processNetworks <- function(user, lines, domain, type) {
     Sys.sleep(300)
   }
 }
+
 #' @description Function to get roads data for the world (10m rnaturalearth)
 #' @param path A character string specifying the path to write the roads
 #' @param gee_path A character string specifying the path to write the roads
 #' @param user A character string specifying the Google Earth Engine user name.
 #' @return A euclidean distance raster with roads for the world.
 #' @export
-path <- "Z:/pops_pesthostuse/pops.sdm/Data/"
-gee_path <- "Q:/My Drive/assets/"
-user <- "blaginh@ncsu.edu"
-
+#' 
 get_roads_global <- function(path, gee_path, user) {
   fn <- c(
     paste0(path, "Original/ne_roads/ne_10m_roads.gpkg"),
