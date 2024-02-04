@@ -19,13 +19,12 @@ get_biovars_global <- function(path) {
       var = "bio", res = 0.5,
       path = tempdir()
     )
-    dir.create(paste0(path, "Original/wc2.1_30s_bio"), showWarnings = FALSE)
+    dir.create(dirname(fn[1]), showWarnings = FALSE)
     # Write each layer to file
     lapply(1:terra::nlyr(biovars), function(x) {
       terra::writeRaster(biovars[[x]],
         overwrite = TRUE, gdal = "COMPRESS=ZSTD",
-        filename = paste0(
-          path, "Original/wc2.1_30s_bio/",
+        filename = paste0(dirname(fn[1]),
           names(biovars)[x], ".tif"
         ),
         datatype = "FLT4S"
@@ -41,6 +40,7 @@ get_biovars_global <- function(path) {
 #' @param path A character string specifying the path to write the biovars.
 #' @return A raster with 19 biovariable layers for CONUS.
 #' @export
+
 get_biovars_conus <- function(path) {
   bio_names <- c(paste0("bio", 1:4), "bio4a", paste0("bio", 5:19))
   fn <- paste0(path, "Original/BioClimComposite/BioClimComposite_1971_2000_400m_", bio_names, ".tif") # nolint: line_length_linter.
@@ -56,12 +56,12 @@ get_biovars_conus <- function(path) {
       "BioClimComposite_1971_2000_400m.tif" # nolint
     ))
     names(biovars) <- c(paste0("bio", 1:4), "bio4a", paste0("bio", 5:19))
-    dir.create(paste0(path, "Original/BioClimComposite"), showWarnings = FALSE)
+    dir.create(dirname(fn[1]), showWarnings = FALSE)
     # Write each layer to file
     lapply(1:terra::nlyr(biovars), function(x) {
       terra::writeRaster(biovars[[x]],
         overwrite = TRUE, gdal = "COMPRESS=ZSTD",
-        filename = paste0(path, "Original/BioClimComposite/BioClimComposite_1971_2000_400m_", # nolint: line_length_linter.
+        filename = paste0(dirname(fn[1]), "/BioClimComposite_1971_2000_400m_",
                           names(biovars)[x], ".tif"),
         datatype = "FLT4S"
       )
@@ -93,6 +93,7 @@ get_l48_boundary <- function() {
 #' @param path A character string with the path to write the terrain variables.
 #' @return A hillshade raster.
 #' @export
+
 get_hillshade <- function(path, elevation) {
   fn <- paste0(c("slope", "aspect", "hillshade"), ".tif")
   # Calculate slope & export
@@ -127,19 +128,21 @@ get_hillshade <- function(path, elevation) {
 #' @param path A character string specifying the path to write the elevation.
 #' @return A list with elevation & hillshade rasters.
 #' @export
+
 get_topo_global <- function(path) {
   fn <- c(
     paste0(path, "Original/wc2.1_30s_elev/wc2.1_30s_elev.tif"),
-    paste0(path, "Raster/Global/wc2.1_30s_hillshade.tif")
+    paste0(path, "Raster/Global/wc2.1_30s_elev/wc2.1_30s_hillshade.tif")
   )
   if (!all(file.exists(fn))) {
     elevation <- geodata::elevation_global(res = 0.5, path = tempdir())
-    dir.create(paste0(path, "Original/wc2.1_30s_elev"), showWarnings = FALSE)
+    dir.create(dirname(fn[1]), showWarnings = FALSE, recursive = TRUE)
+    dir.create(dirname(fn[2]), showWarnings = FALSE, recursive = TRUE)
     terra::writeRaster(elevation,
       overwrite = TRUE, gdal = "COMPRESS=ZSTD",
       filename = fn, datatype = "INT2S"
     )
-    shd <- get_hillshade(path = paste0(path, "Raster/Global/wc2.1_30s_"),
+    shd <- get_hillshade(path = dirname(fn[2]),
                          elevation)
     topo <- list(elevation, shd)
   } else {
@@ -154,10 +157,10 @@ get_topo_global <- function(path) {
 #' @param path A character string specifying the path to write the elevation.
 #' @export
 
-get_topo_conus <- function(key, path) {
+get_topo_conus <- function(path, key) {
   fn <- c(
     paste0(path, "Original/SRTMGL1/SRTMGL1_1s_l48.tif"),
-    paste0(path, "Raster/USA/SRTMGL1_1s_l48_hillshade.tif")
+    paste0(path, "Raster/USA/SRTMGL1/SRTMGL1_1s_l48_hillshade.tif")
   )
   if (!all(file.exists(fn))) {
     # Get bounding box of CONUS
@@ -170,7 +173,7 @@ get_topo_conus <- function(key, path) {
       loc_bb[[x]] <- sf::st_bbox(loc_bb[[x]])
     })
     # Download tiles
-    dir.create(paste0(path, "Original/SRTMGL1/tiles"),
+    dir.create(paste0(dirname(fn[1]), "/tiles"),
       showWarnings = FALSE,
       recursive = TRUE
     )
@@ -213,7 +216,8 @@ get_topo_conus <- function(key, path) {
     # Delete tiles folder
     unlink(paste0(path, "Original/SRTMGL1/tiles"), recursive = TRUE)
     # Calculate hillshade
-    shd <- get_hillshade(path = paste0(path, "Raster/USA/SRTMGL1_1s_l48_"),
+    dir.create(dirname(fn[2]), showWarnings = FALSE, recursive = TRUE)
+    shd <- get_hillshade(path = paste0(dirname(fn[2]), "/SRTMGL1_1s_l48_"),
                          srtm)
     topo <- list(srtm, shd)
   } else {
@@ -235,7 +239,7 @@ get_landcover_global <- function(path) {
     landcover <- lapply(seq_along(types), function(x) {
       geodata::landcover(var = types[[x]], path = tempdir())
     })
-    dir.create(paste0(path, "Original/WorldCover"), showWarnings = FALSE)
+    dir.create(dirname(fn[1]), showWarnings = FALSE)
     lapply(seq_along(fn), function(x) {
       terra::writeRaster(landcover[[x]],
         overwrite = TRUE,
@@ -258,10 +262,11 @@ get_landcover_global <- function(path) {
 
 get_landcover_conus <- function(path) {
   landcover_types <- c("built", "deciduous", "evergreen", "trees", "shrubs",
-                         "grassland", "pasture", "cropland", "cultivated",
-                         "wetland")
+                       "grassland", "pasture", "cropland", "cultivated",
+                       "wetland")
   fn <- c(paste0(path, "Original/nlcd/nlcd_2021_land_cover_l48_20230630.tif"),
-          paste0(path, "Raster/USA/nlcd_2021_land_cover_l48_", landcover_types,
+          paste0(path, "Raster/USA/nlcd/nlcd_2021_land_cover_l48_",
+                 landcover_types,
                  ".tif"))
   if (!all(file.exists(fn))) {
     url <- "https://s3-us-west-2.amazonaws.com/mrlc/nlcd_2021_land_cover_l48_20230630.zip" # nolint: line_length_linter.
@@ -273,7 +278,7 @@ get_landcover_conus <- function(path) {
                                                                 "/nlcd"))
     # Read in raster
     landcover <- terra::rast(paste0(tempdir(), "/nlcd/nlcd_2021_land_cover_l48_20230630.img")) # nolint: line_length_linter.
-    dir.create(paste0(path, "Original/nlcd"), showWarnings = FALSE,
+    dir.create(dirname(fn[1]), showWarnings = FALSE,
                recursive = TRUE)
     terra::writeRaster(landcover,
       overwrite = TRUE, gdal = "COMPRESS=ZSTD",
@@ -296,7 +301,8 @@ get_landcover_conus <- function(path) {
     )
     for (i in seq_along(landcover_types)) {
       reclass_rule <- reclass_rules[[i]]
-      output_file <- paste0(path, "Raster/USA/nlcd_2021_land_cover_l48_",
+      dir.create(dirname(fn[2]), showWarnings = FALSE, recursive = TRUE)
+      output_file <- paste0(dirname(fn[2]), "/nlcd_2021_land_cover_l48_",
                             landcover_types[i], ".tif")
       start_time <- Sys.time() # Start time
       r <- terra::classify(landcover, reclass_rule, right = NA, others = NA)
@@ -326,14 +332,14 @@ get_landcover_conus <- function(path) {
 get_gdd_global <- function(path) {
   fn <- c(
     paste0(path, "Original/wc2.1_30s_tavg/wc2.1_30s_tavg.tif"), # original
-    paste0(path, "Raster/Global/wc2.1_30s_gdd.tif")
+    paste0(path, "Raster/Global/wc2.1_30s_tavg/wc2.1_30s_gdd.tif")
   ) # gdd
   if (!all(file.exists(fn))) {
     tavg <- geodata::worldclim_global(var = "tavg", res = 0.5, path = tempdir())
-    dir.create(paste0(path, "Original/wc2.1_30s_tavg"), showWarnings = FALSE)
+    dir.create(dirname(fn[1]), showWarnings = FALSE, recursive = TRUE)
     terra::writeRaster(tavg,
       overwrite = TRUE, gdal = "COMPRESS=ZSTD",
-      filename = fn, datatype = "FLT4S"
+      filename = fn[1], datatype = "FLT4S"
     )
     tbase <- 5
     gdd <- terra::tapp(x = tavg, tbase = tbase, fun = function(tavg, tbase) {
@@ -343,6 +349,7 @@ get_gdd_global <- function(path) {
       xbase <- sum(xbase * days)
       return(xbase)
     })
+    dir.create(dirname(fn[2]), showWarnings = FALSE, recursive = TRUE)
     names(gdd) <- "gdd_tbase5"
     terra::writeRaster(gdd,
       filename = fn[2], overwrite = TRUE, datatype = "FLT4S",
@@ -361,26 +368,26 @@ get_gdd_global <- function(path) {
 #' @export
 
 get_prectiming_global <- function(path) {
-  fn <- paste0(path, "Raster/Global/wc2.1_30s_prec_timing.tif")
-  if (!file.exists(fn)) {
+  fn <- c(paste0(path, "Original/wc2.1_30s_prec/wc2.1_30s_prec.tif"),
+          paste0(path, "Raster/Global/wc2.1_30s_prec/wc2.1_30s_prec_timing.tif")) # nolint: line_length_linter.
+  if (!all(file.exists(fn))) {
     precip <- geodata::worldclim_global(var = "prec", res = 0.5,
                                         path = tempdir())
-    dir.create(paste0(path, "Original/wc2.1_30s_prec"), showWarnings = FALSE)
+    dir.create(dirname(fn[1]), showWarnings = FALSE, recursive = TRUE)
     terra::writeRaster(precip,
       overwrite = TRUE, gdal = "COMPRESS=ZSTD",
-      filename = fn, datatype = "INT2S"
+      filename = fn[1], datatype = "INT2S"
     )
-    precip <- terra::rast(fn)
     precip <- terra::app(x = precip, fun = function(x) {
       return(sum(x[[12]], x[[1]], x[[2]]) - sum(x[[6]], x[[7]], x[[8]]))
     })
     names(precip) <- "PrecipTiming"
     precip <- terra::writeRaster(precip,
-      filename = paste0(path, "Raster/Global/wc2.1_30s_prec_timing.tif"),
+      filename = paste0(dirname(fn[2]), "/wc2.1_30s_prec_timing.tif"),
       overwrite = TRUE, datatype = "INT2S", gdal = "COMPRESS=ZSTD"
     )
   } else {
-    precip <- terra::rast(fn)
+    precip <- terra::rast(fn[2])
   }
   return(precip)
 }
@@ -395,8 +402,7 @@ get_pop_global <- function(path) {
   fn <- paste0(path, "Original/gpw_v4_population_density/gpw_v4_population_density_rev11_2020_30s.tif") # nolint: line_length_linter.
   if (!file.exists(fn)) {
     pop <- geodata::population(year = 2020, res = 0.5, path = tempdir())
-    dir.create(paste0(path, "Original/gpw_v4_population_density"),
-               showWarnings = FALSE)
+    dir.create(dirname(fn), showWarnings = FALSE)
     terra::writeRaster(pop, overwrite = TRUE, gdal = "COMPRESS=ZSTD",
                        filename = fn, datatype = "FLT4S")
   } else {
@@ -517,11 +523,11 @@ dist_networks <- function(user, lines, domain, type) {
 get_roads_global <- function(path, gee_path, user) {
   fn <- c(
     paste0(path, "Original/ne_roads/ne_10m_roads.gpkg"),
-    paste0(path, "Raster/Global/ne_roads_distance_world_30s.tif")
+    paste0(path, "Raster/Global/ne_roads/ne_roads_distance_world_30s.tif")
   )
   if (!all(file.exists(fn))) {
     roads <- rnaturalearth::ne_download(type = "roads", scale = 10)
-    dir.create(paste0(path, "Original/ne_roads"), showWarnings = FALSE)
+    dir.create(dirname(fn[1]), showWarnings = FALSE, recursive = TRUE)
     sf::st_write(roads, dsn = fn[1])
     dist_networks(user, lines = roads, domain = "world", type = "roads")
     roads <- list.files(gee_path, pattern = "dist2roads_world",
@@ -529,6 +535,7 @@ get_roads_global <- function(path, gee_path, user) {
     roads <- terra::sprc(roads)
     roads <- terra::mosaic(roads)
     names(roads) <- "dist2roads"
+    dir.create(dirname(fn[2]), showWarnings = FALSE, recursive = TRUE)
     terra::writeRaster(roads,
       filename = fn[2], overwrite = TRUE, datatype = "INT4U",
       gdal = "COMPRESS=ZSTD"
@@ -549,11 +556,11 @@ get_roads_global <- function(path, gee_path, user) {
 get_rails_global <- function(path, gee_path, user) {
   fn <- c(
     paste0(path, "Original/ne_railroads/ne_10m_railroads.gpkg"),
-    paste0(path, "Raster/Global/ne_railroads_dist_world_30s.tif")
+    paste0(path, "Raster/Global/ne_railroads/ne_railroads_dist_world_30s.tif")
   )
   if (!all(file.exists(fn))) {
     railroads <- rnaturalearth::ne_download(type = "railroads", scale = 10)
-    dir.create(paste0(path, "Original/ne_railroads"), showWarnings = FALSE)
+    dir.create(dirname(fn[1]), showWarnings = FALSE)
     sf::st_write(railroads, dsn = fn[1])
     dist_networks(user, lines = railroads, domain = "world", type = "rails")
     railroads <- list.files(gee_path, pattern = "dist2rails_world",
@@ -561,6 +568,7 @@ get_rails_global <- function(path, gee_path, user) {
     railroads <- terra::sprc(railroads)
     railroads <- terra::mosaic(railroads)
     names(railroads) <- "dist2rails"
+    dir.create(dirname(fn[2]), showWarnings = FALSE, recursive = TRUE)
     terra::writeRaster(railroads,
       filename = fn[2], overwrite = TRUE, datatype = "INT4U",
       gdal = "COMPRESS=ZSTD"
@@ -571,26 +579,24 @@ get_rails_global <- function(path, gee_path, user) {
   return(railroads)
 }
 
-get_rails_global(path, gee_path, user)
-
 #' @description Function to get soil pH & wc 33kpa & wc 1500kpa for the world
 #' (250m OpenLandMap)
 #' @param path A character string specifying the path to write soil vars
 #' @param return A list pH & wc 33kpa & wc 1500kpa rasters for the world
 #' @export
 
-get_soil_vars_global <- function(path) {
+get_soilvars_global <- function(path) {
   # Create file names
   depths <- c("b0..0cm", "b10..10cm", "b30..30cm", "b60..60cm", "b100..100cm",
               "b200..200cm")
   orig_root <- "Original/OpenLandMap/soils/"
-  fn <- c(paste0(path, orig_root, "ph/sol_ph.h2o_usda.4c1a2a_m_250m_", depths,
+  fn <- c(paste0(path, orig_root, "sol_ph.h2o_usda.4c1a2a_m_250m_", depths,
                  "_1950..2017_v0.2.tif"),
-  paste0(path, orig_root,"watercontent/sol_watercontent.33kPa_usda.4b1c_m_250m_", depths, "_1950..2017_v0.1.tif"), # nolint: line_length_linter
-  paste0(path, orig_root,"watercontent/sol_watercontent.1500kPa_usda.3c2a1a_m_250m_", depths, "_1950..2017_v0.1.tif"), # nolint: line_length_linter
-  paste0(path, "Raster/Global/OpenLandMap_sol_ph.h2o_usda.4c1a2a_m_250m_mean_depth_1950..2017_v0.2.tif"), # nolint: line_length_linter
-  paste0(path, "Raster/Global/OpenLandMap_sol_watercontent.33kPa_usda.4b1c_m_250m_mean_depth_1950..2017_v0.1.tif"), # nolint: line_length_linter
-  paste0(path, "Raster/Global/OpenLandMap_sol_watercontent.1500kPa_usda.3c2a1a_m_250m_mean_depth_1950..2017_v0.1.tif")) # nolint: line_length_linter
+  paste0(path, orig_root,"sol_watercontent.33kPa_usda.4b1c_m_250m_", depths, "_1950..2017_v0.1.tif"), # nolint: line_length_linter
+  paste0(path, orig_root,"sol_watercontent.1500kPa_usda.3c2a1a_m_250m_", depths, "_1950..2017_v0.1.tif"), # nolint: line_length_linter
+  paste0(path, "Raster/Global/OpenLandMap/soils/sol_ph.h2o_usda.4c1a2a_m_250m_mean_depth_1950..2017_v0.2.tif"), # nolint: line_length_linter
+  paste0(path, "Raster/Global/OpenLandMap/soils/sol_watercontent.33kPa_usda.4b1c_m_250m_mean_depth_1950..2017_v0.1.tif"), # nolint: line_length_linter
+  paste0(path, "Raster/Global/OpenLandMap/soils/sol_watercontent.1500kPa_usda.3c2a1a_m_250m_mean_depth_1950..2017_v0.1.tif")) # nolint: line_length_linter
   # check if file exists
   if (!all(file.exists(fn))) {
     # Download soil pH and water content
@@ -621,52 +627,151 @@ get_soil_vars_global <- function(path) {
                         full.names = TRUE, recursive = TRUE)
     files <- files[grepl(".tif$", files)]
     files <- sort(files)
-    # Create export file names
-    fn <- c(
-      paste0(path, "Original/OpenLandMap/soils/ph/",
-             basename(files[grepl("sol_ph", files)])),
-      paste0(path, "Original/OpenLandMap/soils/watercontent/",
-             basename(files[grepl("sol_watercontent", files)]))
-    )
-    fn <- sort(fn)
+    dir.create(dirname(fn[1]), showWarnings = FALSE, recursive = TRUE)
     # For each file, check if pH or water content, & write to correct folder
     for (x in seq_along(files)) {
-      if (grepl("sol_ph", files[x])) {
-        terra::writeRaster(terra::rast(files[x]),
-          overwrite = TRUE, gdal = "COMPRESS=ZSTD",
-          filename = fn[x], datatype = "INT1U"
-        )
-      } else if (grepl("sol_watercontent", files[x])) {
-        terra::writeRaster(terra::rast(files[x]),
-          overwrite = TRUE, gdal = "COMPRESS=ZSTD",
-          filename = fn[x], datatype = "INT1U"
-        )
-      } else {
-        print(paste0("Skipped file ", files[x],
-                     " because it is not pH or water content"))
-      }
-      print(paste0("Finished writing ", files[x]))
+      filename <- paste0(dirname(fn[1]), "/", basename(files[x]))
+      terra::writeRaster(terra::rast(files[x]), overwrite = TRUE,
+                         gdal = "COMPRESS=ZSTD", filename = filename,
+                         datatype = "INT1U")
     }
-    soils <- list.files(paste0(path, "Original/OpenLandMap/soils"),
-                        full.names = TRUE, recursive = TRUE)
+    soilvars <- list.files(dirname(fn[1]), full.names = TRUE, recursive = TRUE)
+    dir.create(dirname(fn[grep("Raster", fn)][1]), showWarnings = FALSE,
+               recursive = TRUE)
     # Compute mean for ph and water content
     variables <- c("_ph", "33kPa", "1500kPa")
-    output_filenames <- c("OpenLandMap_sol_ph.h2o_usda.4c1a2a_m_250m_mean_depth_1950..2017_v0.2.tif", # nolint: line_length_linter
-    "OpenLandMap_sol_watercontent.33kPa_usda.4b1c_m_250m_mean_depth_1950..2017_v0.1.tif", # nolint: line_length_linter
-    "OpenLandMap_sol_watercontent.1500kPa_usda.3c2a1a_m_250m_mean_depth_1950..2017_v0.1.tif") # nolint: line_length_linter
-    soil_vars <- lapply(seq_along(variables), function(i) {
+    output_filenames <- c("sol_ph.h2o_usda.4c1a2a_m_250m_mean_depth_1950..2017_v0.2.tif", # nolint: line_length_linter
+                          "sol_watercontent.33kPa_usda.4b1c_m_250m_mean_depth_1950..2017_v0.1.tif", # nolint: line_length_linter
+                          "sol_watercontent.1500kPa_usda.3c2a1a_m_250m_mean_depth_1950..2017_v0.1.tif") # nolint: line_length_linter
+    soilvars <- lapply(seq_along(variables), function(i) {
       var <- variables[i]
-      raster <- terra::rast(soils[grepl(var, soils)])
+      raster <- terra::rast(soilvars[grepl(var, soilvars)])
       raster <- terra::mean(raster, na.rm = TRUE)
       names(raster) <- var
-      terra::writeRaster(raster,
-        overwrite = TRUE, gdal = "COMPRESS=ZSTD",
-        filename = paste0(path, "Raster/Global/", output_filenames[i]),
-        datatype = "INT1U"
-      )
+      terra::writeRaster(raster, overwrite = TRUE, gdal = "COMPRESS=ZSTD",
+                         filename = paste0(path, "Raster/Global/OpenLandMap/soils/", output_filenames[i]), # nolint: line_length_linter
+                         datatype = "INT1U")
+      return(raster)
     })
   } else {
-    soil_vars <- lapply(fn, terra::rast)
+    soilvars <- lapply(fn, terra::rast)
   }
-  return(soil_vars)
+  return(soilvars)
 }
+
+#' @description Function to reproject, resample, and extend a raster to a base
+#' raster; and in the case of the USA, coarsen the raster to common
+#' resolutions: 100m, 250m, 500m, and 1000m.
+#' @param pred The predictor raster to reproject, resample, and extend.
+#' @param domain A character string of Global or USA
+#' @param path A character string specifying the path to write the reprojected
+#' and resampled rasters.
+#' @param base The base raster to reproject and resample the predictor to.
+#' @param crop A logical specifying whether to crop the raster to the L48
+#' boundary BEFORE reprojecting and resampling. Only in cases where the
+#' predictor is only available at the global resolution.
+#' @return A print statement of the time taken to reproject and resample the
+#' predictor raster.
+#' @export
+
+match_to_base <- function(pred, base, domain, path, crop) {
+  filename <- names(pred)
+  dir <- gsub(".*\\/", "", dirname(terra::sources(pred)))
+  filename <- paste0(dir, "/", dir, "_",filename)
+  if (domain == "Global" && crop == FALSE) {
+    filename <- paste0(path, "Raster/Global/", filename, "_reproj_1000m.tif")
+    dir.create(dirname(filename), showWarnings = FALSE, recursive = TRUE)
+  } else if (domain == "USA" && crop == FALSE) {
+    filename <- paste0(path, "Raster/USA/", filename, "_reproj_",c(30,100,250,500,1000),"m.tif")
+    dir.create(dirname(filename[1]), showWarnings = FALSE, recursive = TRUE)
+  } else if (domain == "Global" && crop == TRUE) {
+    filename <- c(paste0(path, "Raster/Global/", filename, "_reproj_1000m.tif"), 
+    paste0(path, "Raster/USA/", filename, "_reproj_",c(30,100,250,500,1000),"m.tif"))
+    dir.create(dirname(filename[1]), showWarnings = FALSE, recursive = TRUE)
+    dir.create(dirname(filename[6]), showWarnings = FALSE, recursive = TRUE)
+  }
+
+  if (!all(file.exists(filename))) {
+    # If datatype is INT1U method is nearest neighbor, else bilinear
+    d_type <- terra::datatype(pred)
+    method <- ifelse(d_type == "INT1U", "near", "bilinear")
+
+    # If crop is TRUE, crop to l48 boundary
+    if (crop == TRUE) {
+      l48 <- get_l48_boundary()
+      l48 <- terra::vect(l48)
+      l48 <- terra::as.polygons(terra::ext(l48) * 1.1)
+      l48 <- terra::project(l48, pred)
+      pred <- terra::crop(pred, l48)
+    } else {
+      pred <- pred
+    }
+
+    # Reproject and resample
+    start_time <- Sys.time()
+    r <- terra::project(pred, terra::crs(base), method = method)
+    terra::resample(r, base, method = method, filename = filename, overwrite = TRUE,
+                    wopt = list(datatype = d_type, gdal = "COMPRESS=ZSTD"))
+    end_time <- Sys.time()
+    time_taken <- end_time - start_time
+    msg <- print(paste("Time taken for", basename(filename), ":", time_taken))
+  } else {
+    msg <- print(paste0(basename(filename), " has already been created"))
+  }
+  return(msg)
+}
+
+#' @description Function to get all the get functions
+#' @param path A character string specifying the path to write the rasters
+#' @export
+
+reproject_and_extend <- function(path) {
+  get_functions <- c("get_biovars_global", "get_topo_global",
+                     "get_landcover_global", "get_gdd_global",
+                     "get_prectiming_global", "get_pop_global",
+                     "get_roads_global", "get_rails_global",
+                     "get_soilvars_global", "get_biovars_conus",
+                     "get_topo_conus", "get_landcover_conus")
+
+  get_functions <- data.frame(do.call(rbind, strsplit(get_functions, "_")))
+  colnames(get_functions) <- c("get", "type", "domain")
+  types <- unique(get_functions$type)
+  base_global <- terra::rast(paste0(path, "Raster/Global/baserasters_pops_sdm/base_1000m_world.tif")) # nolint: line_length_linter
+  base_conus <- terra::rast(paste0(path, "Raster/USA/baserasters_pops_sdm/base_30m_conus.tif")) # nolint: line_length_linter
+  for (i in seq_along(types)) {
+    dt <- get_functions[get_functions$type == types[i], ]
+    if (nrow(dt) > 1) {
+      global <- dt[dt$domain == "global", ]
+      global <- paste0(global$get, "_", global$type, "_", global$domain)
+      global <- get(global)
+      pred <- global(path)
+      for (j in seq_along(pred)) {
+        match_to_base(pred[[j]], base_global, "Global", path, crop = FALSE)
+      }
+      conus <- dt[dt$domain == "conus", ]
+      conus <- paste0(conus$get, "_", conus$type, "_", conus$domain)
+      conus <- get(conus)
+      pred <- conus(path)
+      for (j in seq_along(pred)) {
+        match_to_base(pred[[j]], base_conus, "USA", path, crop = FALSE)
+      }
+    } else if (nrow(dt) == 1 && dt$domain == "global") {
+      global <- paste0(dt$get, "_", dt$type, "_", dt$domain)
+      global <- get(global)
+      pred <- global(path)
+      for (j in seq_along(pred)) {
+        match_to_base(pred[[j]], base_global, "Global", path, crop = FALSE)
+        match_to_base(pred[[j]], base_conus, "USA", path, crop = TRUE)
+      }
+    } else if (nrow(dt) == 1 && dt$domain == "conus") {
+      conus <- paste0(dt$get, "_", dt$type, "_", dt$domain)
+      conus <- get(conus)
+      pred <- conus(path)
+      for (j in seq_along(pred)) {
+        match_to_base(pred[[j]], base_conus, "USA", path, crop = FALSE)
+      }
+    }
+  }
+}
+
+reproject_and_extend(path = "D:/blaginh/pops.sdm/Data/")
