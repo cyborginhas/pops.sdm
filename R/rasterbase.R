@@ -1,19 +1,41 @@
 #' @export
+#' @param drive_path Letter of drive that points to existing data
+#' @param fact Factor to aggregate raster by
+#' @param res Resolution of raster
+
+scratch <- "C:/Users/blaginh/Desktop/test/"
+
+s <- Sys.time()
+geodata::soil_world(var = "bdod", depth = 5, stat = "mean", path = scratch)
+e <- Sys.time()
+
+s2 <- Sys.time()
+geodata::worldclim_global(var='bio', res=.5, path=scratch)
+e2 <- Sys.time()
 
 rasterbase <- function(res){
-  geodir <- 'Q:\\Shared drives\\Data\\Raster\\'
+  geodir <- paste0(drive_path,'/Data/Raster/')
   if(res==1000){
-    if(file.exists(paste(geodir, 'Global\\base_1000m.tif', sep=''))==F){
-      base.rast <- geodata::worldclim_global(var='bio', res=.5, path=paste(geodir, 'Global\\',sep=''))
-      base.rast <- base.rast[[1]]; base.rast <- base.rast/base.rast
-      terra::writeRaster(base.rast, paste(geodir, 'Global\\base_1000m.tif', sep=''))
+    if(file.exists(paste(geodir, 'Global/base_1000m.tif', sep=''))==F){
+      base.rast <- geodata::worldclim_global(var='bio', res=.5, path=paste(geodir, 'Global/',sep=''))
+      base.rast <- base.rast[[1]]
+      base.rast <- base.rast/base.rast
+      terra::writeRaster(base.rast, paste(geodir, 'Global/base_1000m.tif', sep=''))
     }
-    if(file.exists(paste(geodir, 'Global\\base_1000m.tif', sep=''))==T){
-      base.rast <- terra::rast(paste(geodir, 'Global\\base_1000m.tif', sep=''))
+    else{
+      base.rast <- terra::rast(paste(geodir, 'Global/base_1000m.tif', sep=''))
     }
   }
-  if(res<1000){
-    if(file.exists(paste(geodir, 'USA\\base_', res, 'm.tif', sep=''))==F){
+
+  if(res == 500){
+    if(file.exists(paste(geodir, 'USA/base_', res, 'm.tif', sep=''))==F){
+
+    }
+  }
+
+
+  if(res<1000 & res>33){
+    if(file.exists(paste(geodir, 'USA/base_', res, 'm.tif', sep=''))==F){
       if(res!=33){
         if(res==500){
           base.rast <- terra::rast("Q:\\Shared drives\\Data\\Raster\\USA\\soils\\250m\\ph.mean.tif")

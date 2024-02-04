@@ -8,22 +8,33 @@
 # require(stringr)
 # require(terra)
 #' @export
+#' @param drive_path Letter of drive that points to existing data
+#' @param domain the extent of the analysis; can be one of the following text
+#' strings: world, country, l48, state, or county. For country, supply the
+#' country or countries of interest; for state supply the state or states of
+#' interest to the *names* parameter. For county, supply the state of interest
+#' to the *name* parameter, and the county or counties to the *cty_names* parameter.
 
-run_SDM <- function(spname, domain=world(), res){
+run_SDM <- function(spname, domain, res, drive_path, names, cty_names, dir){
   #### 1.0 Load Environmental data and species data ####
-  #if(sources(domain)==sources(world())){
-  domain <- pops.sdm::l48()
-  domain <- pops.sdm::state(c('Oregon'))
-  #domain <- pops.sdm::e
-  #domain <- pops.sdm::county(state='Oregon', names=c('Coos', 'Curry', 'Douglas', 'Jackson', 'Josephine'))
-  spname <- "Notholithocarpus densiflorus"; myName <- stringr::str_replace(tolower(spname),' ', '_')
-  res <- 33
-  dir <- getwd()
-
+  if(domain == "world"){
+    domain <- pops.sdm::world()
+  } else if(domain == "country") {
+    domain <- pops.sdm::country(names)
+  } else if(domain == "l48"){
+    domain <- pops.sdm::l48()
+  } else if(domain == "state") {
+    domain <- pops.sdm::state(names)
+  } else if(domain == "county") {
+    domain <- pops.sdm::county(names, cty_names)
+  } else {
+    print("Domain not provided")
+    stop()
+  }
+  spname <- stringr::str_replace(tolower(spname),' ', '_')
 
   #### 1.1 Gather Environmental Data ####
   envi.vars <- pops.sdm::get_Envi(bio=T, lc=T, ptime=F, soil=T, pop=F, elev=T, res=res)
-  envi.vars <- pops.sdm::get_Envi(bio=T, lc=F, ptime=F, soil=T, pop=F, elev=T, res=250)
   base.r <- terra::crop(x=pops.sdm::rasterbase(res=res), y=domain, mask=T)
   base.r <- terra::subst(base.r, from=0, to=NA)
 
