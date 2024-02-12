@@ -84,7 +84,6 @@ get_l48_boundary <- function() {
                  locs$iso_3166_2 != "US-AS" & locs$iso_3166_2 != "US-AK" &
                  locs$iso_3166_2 != "US-HI", ]
   locs <- sf::st_union(locs)
-  plot(locs)
   return(locs)
 }
 
@@ -660,8 +659,7 @@ get_soilvars_global <- function(path) {
 }
 
 #' @description Function to reproject, resample, and extend a raster to a base
-#' raster; and in the case of the USA, coarsen the raster to common
-#' resolutions: 100m, 250m, 500m, and 1000m.
+#' raster: 30m for CONUS and 1000m for the world.
 #' @param pred The predictor raster to reproject, resample, and extend.
 #' @param domain A character string of Global or USA
 #' @param path A character string specifying the path to write the reprojected
@@ -673,105 +671,113 @@ get_soilvars_global <- function(path) {
 #' @return A print statement of the time taken to reproject and resample the
 #' predictor raster.
 #' @export
-
+#
 match_to_base <- function(pred, base, domain, path, crop) {
+  # Get filename
   filename <- names(pred)
   dir <- gsub(".*\\/", "", dirname(terra::sources(pred)))
-  filename <- paste0(dir, "/", dir, "_",filename)
-  if (domain == "Global" && crop == FALSE) {
-    filename <- paste0(path, "Raster/Global/", filename, "_reproj_1000m.tif")
-    dir.create(dirname(filename), showWarnings = FALSE, recursive = TRUE)
-  } else if (domain == "USA" && crop == FALSE) {
-    filename <- paste0(path, "Raster/USA/", filename, "_reproj_",c(30,100,250,500,1000),"m.tif")
+  filename <- paste0(dir, "/", dir, "_", filename)
+
+  # Create filename based on domain and crop
+  if (domain == "Global") {
+    common_res <- c(1000,2500,5000)
+    filename <- paste0(path, "Raster/Global/", filename, "_reproj_",
+                       common_res, "m.tif")
     dir.create(dirname(filename[1]), showWarnings = FALSE, recursive = TRUE)
-  } else if (domain == "Global" && crop == TRUE) {
-    filename <- c(paste0(path, "Raster/Global/", filename, "_reproj_1000m.tif"), 
-    paste0(path, "Raster/USA/", filename, "_reproj_",c(30,100,250,500,1000),"m.tif"))
+  } else if (domain == "USA") {
+    common_res <- c(30, 100, 250, 500, 1000)
+    filename <- paste0(path, "Raster/USA/", filename, "_reproj_",
+                       common_res, "m.tif")
     dir.create(dirname(filename[1]), showWarnings = FALSE, recursive = TRUE)
-    dir.create(dirname(filename[6]), showWarnings = FALSE, recursive = TRUE)
+  } else {
+    stop("Invalid domain")
   }
 
+  # Check if file exists
   if (!all(file.exists(filename))) {
-    # If datatype is INT1U method is nearest neighbor, else bilinear
+    # Get method and cell size
     d_type <- terra::datatype(pred)
     method <- ifelse(d_type == "INT1U", "near", "bilinear")
 
     # If crop is TRUE, crop to l48 boundary
     if (crop == TRUE) {
-      l48 <- get_l48_boundary()
-      l48 <- terra::vect(l48)
-      l48 <- terra::as.polygons(terra::ext(l48) * 1.1)
-      l48 <- terra::project(l48, pred)
-      pred <- terra::crop(pred, l48)
+      l48 <- terra::vect(get_l48_boundary())
+      l48 <- terra::project(l48, terra::crs(pred))
+      pred <- terra::crop(pred, l48, mask = TRUE)
     } else {
       pred <- pred
     }
 
-    # Reproject and resample
-    start_time <- Sys.time()
-    r <- terra::project(pred, terra::crs(base), method = method)
-    terra::resample(r, base, method = method, filename = filename, overwrite = TRUE,
-                    wopt = list(datatype = d_type, gdal = "COMPRESS=ZSTD"))
-    end_time <- Sys.time()
-    time_taken <- end_time - start_time
-    msg <- print(paste("Time taken for", basename(filename), ":", time_taken))
+    # For each base_raster, reproject and resample in a loop
+    for (i in seq_along(base)) {
+      start_time <- Sys.time() # Start time
+      r <- terra::project(pred, base[[i]], method = method,
+                          wopt = list(datatype = d_type))
+      terra::crop(r, base[[i]], mask = TRUE, extend = TRUE,
+                  filename = filename[i], overwrite = TRUE,
+                  wopt = list(datatype = d_type, gdal = "COMPRESS=ZSTD"))
+      terra::tmpFiles(orphan = TRUE, old = TRUE, remove = TRUE)
+      end_time <- Sys.time() # End time
+      time_taken <- (end_time - start_time)/60
+      print(paste("Time taken for", basename(filename[i]), ":", time_taken,
+                  "minutes"))
+    }
+    msg <- print(paste0(basename(filename), " has been created"))
   } else {
     msg <- print(paste0(basename(filename), " has already been created"))
   }
   return(msg)
 }
 
-#' @description Function to get all the get functions
-#' @param path A character string specifying the path to write the rasters
+
+#' @description Function to reproject, resample, and extend a raster to a base
+#' raster: 30m for CONUS and 1000m for the world.
+#' @param path A character string specifying the path to write the reprojected
+#' and resampled rasters.
+#' @return A print statement of the time taken to reproject and resample the
+#' predictor raster.
 #' @export
 
-reproject_and_extend <- function(path) {
-  get_functions <- c("get_biovars_global", "get_topo_global",
-                     "get_landcover_global", "get_gdd_global",
-                     "get_prectiming_global", "get_pop_global",
-                     "get_roads_global", "get_rails_global",
-                     "get_soilvars_global", "get_biovars_conus",
-                     "get_topo_conus", "get_landcover_conus")
+batch_match_to_base <- function(path) {
+  # Get list of global rasters
+  global_rasters <- c(get_topo_global(path), get_landcover_global(path),
+               get_gdd_global(path), get_prectiming_global(path),
+               get_pop_global(path), get_roads_global(path),
+               get_rails_global(path), get_soilvars_global(path),
+               get_biovars_global(path))
+               
+  # Get list of conus rasters
+  conus_rasters <- c(get_topo_conus(path),
+                     get_landcover_conus(path), get_biovars_conus(path))
 
-  get_functions <- data.frame(do.call(rbind, strsplit(get_functions, "_")))
-  colnames(get_functions) <- c("get", "type", "domain")
-  types <- unique(get_functions$type)
-  base_global <- terra::rast(paste0(path, "Raster/Global/baserasters_pops_sdm/base_1000m_world.tif")) # nolint: line_length_linter
-  base_conus <- terra::rast(paste0(path, "Raster/USA/baserasters_pops_sdm/base_30m_conus.tif")) # nolint: line_length_linter
-  for (i in seq_along(types)) {
-    dt <- get_functions[get_functions$type == types[i], ]
-    if (nrow(dt) > 1) {
-      global <- dt[dt$domain == "global", ]
-      global <- paste0(global$get, "_", global$type, "_", global$domain)
-      global <- get(global)
-      pred <- global(path)
-      for (j in seq_along(pred)) {
-        match_to_base(pred[[j]], base_global, "Global", path, crop = FALSE)
-      }
-      conus <- dt[dt$domain == "conus", ]
-      conus <- paste0(conus$get, "_", conus$type, "_", conus$domain)
-      conus <- get(conus)
-      pred <- conus(path)
-      for (j in seq_along(pred)) {
-        match_to_base(pred[[j]], base_conus, "USA", path, crop = FALSE)
-      }
-    } else if (nrow(dt) == 1 && dt$domain == "global") {
-      global <- paste0(dt$get, "_", dt$type, "_", dt$domain)
-      global <- get(global)
-      pred <- global(path)
-      for (j in seq_along(pred)) {
-        match_to_base(pred[[j]], base_global, "Global", path, crop = FALSE)
-        match_to_base(pred[[j]], base_conus, "USA", path, crop = TRUE)
-      }
-    } else if (nrow(dt) == 1 && dt$domain == "conus") {
-      conus <- paste0(dt$get, "_", dt$type, "_", dt$domain)
-      conus <- get(conus)
-      pred <- conus(path)
-      for (j in seq_along(pred)) {
-        match_to_base(pred[[j]], base_conus, "USA", path, crop = FALSE)
-      }
-    }
+  # Get list of global rasters for CONUS crop
+  global_rasters_conus <- global_rasters[9:34]
+
+  # Get base rasters
+  base_global <- lapply(c(1000,2500,5000), function(x) {
+    terra::rast(paste0(path, "Raster/Global/pops_sdm_base/base_", x, "m_global_epsg4326.tif"))
+  })
+  base_conus <- lapply(c(30, 100, 250, 500, 1000), function(x) {
+    terra::rast(paste0(path, "Raster/USA/pops_sdm_base/base_", x, "m_conus_epsg4326.tif"))
+  })
+
+  # Use for loop to reproject and resample global rasters
+  for (i in seq_along(global_rasters)) {
+    pred <- global_rasters[[i]]
+    match_to_base(pred, base = base_global, domain = "Global", path, crop = FALSE)
+  }
+
+  # Use for loop to reproject and resample conus rasters
+  for (i in seq_along(conus_rasters)) {
+    pred <- conus_rasters[[i]]
+    match_to_base(pred, base = base_conus, domain = "USA", path, crop = FALSE)
+  }
+
+  # Use for loop to crop to CONUS reproject and resample global rasters
+  for (i in seq_along(global_rasters)) {
+    pred <- global_rasters_conus[[i]]
+    match_to_base(pred, base = base_conus, domain = "USA", path, crop = TRUE)
   }
 }
 
-reproject_and_extend(path = "D:/blaginh/pops.sdm/Data/")
+batch_match_to_base(path = "D:/blaginh/pops.sdm/Data/")
