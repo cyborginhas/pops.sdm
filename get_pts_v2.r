@@ -861,6 +861,8 @@ batch_get_pts <- function(scientific_name, taxon_rank, path, conus) {
     occs1 <- get_neon_pts(taxon_key, path)
     export_data(occs1, path)
     occs <- rbindlist(list(occs, occs1[[3]]), fill = TRUE)
+  } else {
+    occs <- occs
   }
   return(occs)
 }
