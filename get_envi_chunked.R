@@ -588,14 +588,14 @@ get_soilvars_global <- function(path) {
   # Create file names
   depths <- c("b0..0cm", "b10..10cm", "b30..30cm", "b60..60cm", "b100..100cm",
               "b200..200cm")
-  orig_root <- "Original/OpenLandMap/soils/"
+  orig_root <- "Original/OpenLandMap_soils/"
   fn <- c(paste0(path, orig_root, "sol_ph.h2o_usda.4c1a2a_m_250m_", depths,
                  "_1950..2017_v0.2.tif"),
   paste0(path, orig_root,"sol_watercontent.33kPa_usda.4b1c_m_250m_", depths, "_1950..2017_v0.1.tif"), # nolint: line_length_linter
   paste0(path, orig_root,"sol_watercontent.1500kPa_usda.3c2a1a_m_250m_", depths, "_1950..2017_v0.1.tif"), # nolint: line_length_linter
-  paste0(path, "Raster/Global/OpenLandMap/soils/sol_ph.h2o_usda.4c1a2a_m_250m_mean_depth_1950..2017_v0.2.tif"), # nolint: line_length_linter
-  paste0(path, "Raster/Global/OpenLandMap/soils/sol_watercontent.33kPa_usda.4b1c_m_250m_mean_depth_1950..2017_v0.1.tif"), # nolint: line_length_linter
-  paste0(path, "Raster/Global/OpenLandMap/soils/sol_watercontent.1500kPa_usda.3c2a1a_m_250m_mean_depth_1950..2017_v0.1.tif")) # nolint: line_length_linter
+  paste0(path, "Raster/Global/OpenLandMap_soils/sol_ph.h2o_usda.4c1a2a_m_250m_mean_depth_1950..2017_v0.2.tif"), # nolint: line_length_linter
+  paste0(path, "Raster/Global/OpenLandMap_soils/sol_watercontent.33kPa_usda.4b1c_m_250m_mean_depth_1950..2017_v0.1.tif"), # nolint: line_length_linter
+  paste0(path, "Raster/Global/OpenLandMap_soils/sol_watercontent.1500kPa_usda.3c2a1a_m_250m_mean_depth_1950..2017_v0.1.tif")) # nolint: line_length_linter
   # check if file exists
   if (!all(file.exists(fn))) {
     # Download soil pH and water content
@@ -612,17 +612,17 @@ get_soilvars_global <- function(path) {
       }))
       files <- files[grepl(".tif$", files)]
       files <- files[!grepl("_md_", files)]
-      dir.create(paste0(tempdir(), "/OpenLandMap/soils/", names(dl_urls[x])),
+      dir.create(paste0(tempdir(), "/OpenLandMap_soils/", names(dl_urls[x])),
                  showWarnings = FALSE, recursive = TRUE)
-      dir.create(paste0(path, "Original/OpenLandMap/soils/", names(dl_urls[x])),
+      dir.create(paste0(path, "Original/OpenLandMap_soils/", names(dl_urls[x])),
                  showWarnings = FALSE, recursive = TRUE)
       zen4R::download_zenodo(dl_urls[x],
-        path = paste0(tempdir(), "/OpenLandMap/soils/", names(dl_urls)[x]),
+        path = paste0(tempdir(), "/OpenLandMap_soils/", names(dl_urls)[x]),
         timeout = 60 * 30, files = list(files)
       )
     })
     # List files of .tifs in tempdir
-    files <- list.files(paste0(tempdir(), "/OpenLandMap/soils/"),
+    files <- list.files(paste0(tempdir(), "/OpenLandMap_soils/"),
                         full.names = TRUE, recursive = TRUE)
     files <- files[grepl(".tif$", files)]
     files <- sort(files)
@@ -648,7 +648,7 @@ get_soilvars_global <- function(path) {
       raster <- terra::mean(raster, na.rm = TRUE)
       names(raster) <- var
       terra::writeRaster(raster, overwrite = TRUE, gdal = "COMPRESS=ZSTD",
-                         filename = paste0(path, "Raster/Global/OpenLandMap/soils/", output_filenames[i]), # nolint: line_length_linter
+                         filename = paste0(path, "Raster/Global/OpenLandMap_soils/", output_filenames[i]), # nolint: line_length_linter
                          datatype = "INT1U")
       return(raster)
     })
@@ -656,6 +656,35 @@ get_soilvars_global <- function(path) {
     soilvars <- lapply(fn, terra::rast)
   }
   return(soilvars)
+}
+
+#' @description Function to create file names for resampled and reprojected predictors
+#' @param pred A predictor raster
+#' @param domain A character string specifying the domain (Global or USA)
+#' @param path A character string specifying the path to write the reprojected
+
+get_filename <- function(pred, domain, path) {
+  # Get filename
+  filename <- names(pred)
+  dir <- gsub(".*\\/", "", dirname(terra::sources(pred)))
+  filename <- paste0(dir, "/", dir, "_", filename)
+
+  # Create filename based on domain and crop
+  if (domain == "Global") {
+    common_res <- c(1000, 2500, 5000)
+    filename <- paste0(path, "Raster/Global/", filename, "_reproj_",
+                       common_res, "m.tif")
+    dir.create(dirname(filename[1]), showWarnings = FALSE, recursive = TRUE)
+  } else if (domain == "USA") {
+    common_res <- c(30, 100, 250, 500, 1000)
+    filename <- paste0(path, "Raster/USA/", filename, "_reproj_",
+                       common_res, "m.tif")
+    dir.create(dirname(filename[1]), showWarnings = FALSE, recursive = TRUE)
+  } else {
+    stop("Invalid domain")
+  }
+  
+  return(filename)
 }
 
 #' @description Function to reproject, resample, and extend a raster to a base
@@ -671,27 +700,10 @@ get_soilvars_global <- function(path) {
 #' @return A print statement of the time taken to reproject and resample the
 #' predictor raster.
 #' @export
-#
-match_to_base <- function(pred, base, domain, path, crop) {
-  # Get filename
-  filename <- names(pred)
-  dir <- gsub(".*\\/", "", dirname(terra::sources(pred)))
-  filename <- paste0(dir, "/", dir, "_", filename)
 
-  # Create filename based on domain and crop
-  if (domain == "Global") {
-    common_res <- c(1000,2500,5000)
-    filename <- paste0(path, "Raster/Global/", filename, "_reproj_",
-                       common_res, "m.tif")
-    dir.create(dirname(filename[1]), showWarnings = FALSE, recursive = TRUE)
-  } else if (domain == "USA") {
-    common_res <- c(30, 100, 250, 500, 1000)
-    filename <- paste0(path, "Raster/USA/", filename, "_reproj_",
-                       common_res, "m.tif")
-    dir.create(dirname(filename[1]), showWarnings = FALSE, recursive = TRUE)
-  } else {
-    stop("Invalid domain")
-  }
+match_to_base <- function(pred, base, domain, path, crop) {
+  # Create new filename for reprojected and resampled rasters
+  filename <- get_filename(pred, domain, path)
 
   # Check if file exists
   if (!all(file.exists(filename))) {
@@ -728,7 +740,6 @@ match_to_base <- function(pred, base, domain, path, crop) {
   }
   return(msg)
 }
-
 
 #' @description Function to reproject, resample, and extend a raster to a base
 #' raster: 30m for CONUS and 1000m for the world.
@@ -780,4 +791,3 @@ batch_match_to_base <- function(path) {
   }
 }
 
-batch_match_to_base(path = "D:/blaginh/pops.sdm/Data/")
