@@ -13,6 +13,9 @@ occurs after predictors have been processed (downloaded & backed up - one time; 
 8. Cluster analysis added; and can be called to dynamically updated the clusters considered (optimal clusters depend on predictors considered, their resolution, etc.); option to programmatically change 
 clusters or ignore clusters. Helper function will throw a warning if collinear predictors are included in the analysis.
 9. Dynamic retrieval, storage, and metadata creation of host points by species name, additional databases considered (neon), and scripts to overcome api limits (gbif, rinat)
+
+Low priority:
+
 10. Variogram analysis script added (optional); can be used to determine an appropriate resolution given the data considered; Helper function will throw a warning if resolution selected is not between
 nugget and range for the predictor(s) selected.
 11. Species-environment plots added (optional); can be used to help determine which algorithms are appropriated.
