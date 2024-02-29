@@ -41,40 +41,53 @@ get_biovars_global <- function(path) {
 #' @return A raster with 19 biovariable layers for CONUS.
 #' @export
 
+## get_biovars_conus <- function(path) {
+##   bio_names <- c(paste0("bio", 1:4), "bio4a", paste0("bio", 5:19))
+##   fn <- paste0(path, "Original/BioClimComposite/BioClimComposite_1971_2000_400m_", bio_names, ".tif") # nolint: line_length_linter.
+##   if (!all(file.exists(fn))) {
+##     sbtools::item_file_download(
+##       sb_id = "4ff32906e4b0e183ef5a2f16", dest_dir =
+##       tempdir(), names = "BioClimComposite_1971_2000_400m.tif", # nolint
+##       destinations = paste0(tempdir(), "BioClimComposite_1971_2000_400m.tif"),
+##       overwrite_file = TRUE
+##     )
+##     biovars <- terra::rast(paste0(
+##       tempdir(),
+##       "BioClimComposite_1971_2000_400m.tif" # nolint
+##     ))
+##     names(biovars) <- c(paste0("bio", 1:4), "bio4a", paste0("bio", 5:19))
+##     dir.create(dirname(fn[1]), showWarnings = FALSE)
+##     # Write each layer to file
+##     lapply(1:terra::nlyr(biovars), function(x) {
+##       terra::writeRaster(biovars[[x]],
+##         overwrite = TRUE, gdal = "COMPRESS=ZSTD",
+##         filename = paste0(dirname(fn[1]), "/BioClimComposite_1971_2000_400m_",
+##                           names(biovars)[x], ".tif"),
+##         datatype = "FLT4S"
+##       )
+##     })
+##   } else {
+##     biovars <- lapply(fn, terra::rast)
+##   }
+##   return(biovars)
+## }
+
+#' @description Function to get biovariables for CONUS (USGS biocomposite 15s)
+#' @param path A character string specifying the path to write the biovars.
+#' @return A raster with 19 biovariable layers for CONUS.
+#' @export
+
 get_biovars_conus <- function(path) {
-  bio_names <- c(paste0("bio", 1:4), "bio4a", paste0("bio", 5:19))
-  fn <- paste0(path, "Original/BioClimComposite/BioClimComposite_1971_2000_400m_", bio_names, ".tif") # nolint: line_length_linter.
-  if (!all(file.exists(fn))) {
-    sbtools::item_file_download(
-      sb_id = "4ff32906e4b0e183ef5a2f16", dest_dir =
-      tempdir(), names = "BioClimComposite_1971_2000_400m.tif", # nolint
-      destinations = paste0(tempdir(), "BioClimComposite_1971_2000_400m.tif"),
-      overwrite_file = TRUE
-    )
-    biovars <- terra::rast(paste0(
-      tempdir(),
-      "BioClimComposite_1971_2000_400m.tif" # nolint
-    ))
-    names(biovars) <- c(paste0("bio", 1:4), "bio4a", paste0("bio", 5:19))
-    dir.create(dirname(fn[1]), showWarnings = FALSE)
-    # Write each layer to file
-    lapply(1:terra::nlyr(biovars), function(x) {
-      terra::writeRaster(biovars[[x]],
-        overwrite = TRUE, gdal = "COMPRESS=ZSTD",
-        filename = paste0(dirname(fn[1]), "/BioClimComposite_1971_2000_400m_",
-                          names(biovars)[x], ".tif"),
-        datatype = "FLT4S"
-      )
-    })
-  } else {
-    biovars <- lapply(fn, terra::rast)
-  }
+  bio_names <- c(paste0("bio", 1:19))
+  fn <- paste0(path, "Raster/USA/bioinvasions/bioclimatic/", bio_names, ".tif")
+  biovars <- lapply(fn, terra::rast)
   return(biovars)
 }
 
 #' @description Function to obtain a vector of CONUS.
 #' @return A vector of CONUS.
 #' @export
+
 get_l48_boundary <- function() {
   locs <- rnaturalearth::ne_states(country = "United States of America",
                                    returnclass = "sf")
@@ -410,6 +423,17 @@ get_pop_global <- function(path) {
   return(pop)
 }
 
+#' @description Function to download human pop. density for conus
+#' @param path A character string specifying the path to write the pop data
+#' @return A raster with human population density for the world
+#' @export
+
+get_pop_conus <- function(path) {
+  fn <- paste0(path, "Original/gpw_v4_population_density/gpw_v4_population_density_rev11_2020_30s.tif")
+  pop <- lapply(fn, terra::rast)
+  return(pop)
+}
+
 #' @description Function to calc distance to roads/railroads for the world (30s)
 #' @param lines A sf object of roads/railroads.
 #' @param domain A character string specifying the domain (world or conus)
@@ -545,6 +569,17 @@ get_roads_global <- function(path, gee_path, user) {
   return(roads)
 }
 
+#' @description Function to get roads data for the conus
+#' @param path A character string specifying the path to write the roads
+#' @return A euclidean distance raster with roads for the conus.
+#' @export
+
+get_roads_conus <- function(path) {
+  fn <- paste0(path, "Raster/USA/tiger_roads/tiger_roads_dist2roads.tif")
+  roads <- lapply(fn, terra::rast)
+  return(roads)
+}
+
 #' @description Function to download railroads for the world (10m rnaturalearth)
 #' @param path A character string specifying the path to write the railroads
 #' @param gee_path A character string specifying the path to write the railroads
@@ -575,6 +610,17 @@ get_rails_global <- function(path, gee_path, user) {
   } else {
     railroads <- terra::rast(fn[2])
   }
+  return(railroads)
+}
+
+#' @description Function to get rails data for the conus
+#' @param path A character string specifying the path to write the rails
+#' @return A euclidean distance raster with rails for the conus.
+#' @export
+
+get_rails_conus <- function(path) {
+  fn <- paste0(path, "Raster/USA/tiger_railroads/tiger_railroads_dist2rails.tif")
+  railroads <- lapply(fn, terra::rast)
   return(railroads)
 }
 
@@ -656,6 +702,52 @@ get_soilvars_global <- function(path) {
     soilvars <- lapply(fn, terra::rast)
   }
   return(soilvars)
+}
+
+#' @description Function to get soil characteristic data for the conus
+#' @param path A character string specifying the path to write soil chars
+#' @return A euclidean distance raster with soil chars for the conus.
+#' @export
+
+get_soilvars_conus <- function(path) {
+  chars <- c("alpha", "bd", "clay", "hb", "ksat", "lambda", "n", "om", "ph",
+             "sand", "silt", "theta_r", "theta_s")
+  fn <- paste0(path, "Original/polaris_soils/polaris_soils_", chars, "_0_5.tif")
+  soilvars <- lapply(fn, terra::rast)
+  return(soilvars)
+}
+
+#' @description Function to get PAR for conus (500m MODIS)
+#' @param path A character string specifying the path to write PAR
+#' @return A raster with PAR for the conus.
+#' @export
+
+get_par_conus <- function(path) {
+  fn <- paste0(path, "Original/modis_par/modis_par.tif")
+  par <- lapply(fn, terra::rast)
+  return(par)
+}
+
+#' @description Function to get landsat ndvi data for the conus (30m)
+#' @param path A character string specifying the path to write landsat evi
+#' @return A list with landsat ndvi rasters for the conus.
+#' @export
+
+get_landsat_ndvi_conus <- function(path) {
+  fn <- paste0(path, "Original/landsat_ndvi/landsat_ndvi.tif")
+  ndvi <- lapply(fn, terra::rast)
+  return(ndvi)
+}
+
+#' @description Function to get landsat evi data for the conus (30m)
+#' @param path A character string specifying the path to write landsat evi
+#' @return A list with landsat ndvi rasters for the conus.
+#' @export
+
+get_landsat_evi_conus <- function(path) {
+  fn <- paste0(path, "Original/landsat_evi/landsat_evi.tif")
+  evi <- lapply(fn, terra::rast)
+  return(evi)
 }
 
 #' @description Function to create file names for resampled and reprojected predictors
@@ -758,11 +850,14 @@ batch_match_to_base <- function(path) {
                get_biovars_global(path))
                
   # Get list of conus rasters
-  conus_rasters <- c(get_topo_conus(path),
-                     get_landcover_conus(path), get_biovars_conus(path))
+  conus_rasters <- c(get_topo_conus(path), get_landcover_conus(path),
+                     get_biovars_conus(path), get_pop_conus(path),
+                     get_landsat_evi_conus(path), get_landsat_ndvi_conus(path),
+                     get_par_conus(path), get_soilvars_conus(path),
+                     get_roads_conus(path), get_rails_conus(path))
 
   # Get list of global rasters for CONUS crop
-  global_rasters_conus <- global_rasters[9:34]
+  global_rasters_conus <- c(get_gdd_global(path), get_prectiming_global(path))
 
   # Get base rasters
   base_global <- lapply(c(1000,2500,5000), function(x) {
