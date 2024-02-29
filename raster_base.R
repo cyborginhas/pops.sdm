@@ -3,7 +3,6 @@
 #' @param path Path to write the data to
 #' @return A print message indicating that the base rasters have been created
 #' @export
-path <- "D:/blaginh/pops.sdm/Data/"
 base_conus <- function(path) {
   # Setup base raster filenames for check
   proj <- c(rep("epsg4326", 5))
