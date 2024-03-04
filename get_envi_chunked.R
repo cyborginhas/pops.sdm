@@ -79,7 +79,7 @@ get_biovars_global <- function(path) {
 
 get_biovars_conus <- function(path) {
   bio_names <- c(paste0("bio", 1:19))
-  fn <- paste0(path, "Raster/USA/bioinvasions/bioclimatic/", bio_names, ".tif")
+  fn <- paste0(path, "Raster/USA/bioclimatic/", bio_names, ".tif")
   biovars <- lapply(fn, terra::rast)
   return(biovars)
 }
@@ -833,6 +833,47 @@ match_to_base <- function(pred, base, domain, path, crop) {
   return(msg)
 }
 
+#' @description Function to get the rasters of interest based on domain
+#' and type.
+#' @param path A character string specifying the path to write the rasters.
+#' @param domain A character string specifying the domain (Global or USA).
+
+get_rasters <- function(path, domain = "Global") {
+  if (domain == "Global") {
+    rasters <- c(
+      topo = get_topo_global(path),
+      landcover = get_landcover_global(path),
+      gdd = get_gdd_global(path),
+      prectiming = get_prectiming_global(path),
+      pop = get_pop_global(path),
+      roads = get_roads_global(path),
+      rails = get_rails_global(path),
+      soilvars = get_soilvars_global(path),
+      biovars = get_biovars_global(path),
+      gdd = get_gdd_global(path),
+      prectiming = get_prectiming_global(path)
+    )
+  } else if (domain == "USA") {
+    rasters <- c(
+      topo = get_topo_conus(path),
+      landcover = get_landcover_conus(path),
+      biovars = get_biovars_conus(path),
+      pop = get_pop_conus(path),
+      landsat_evi = get_landsat_evi_conus(path),
+      landsat_ndvi = get_landsat_ndvi_conus(path),
+      par = get_par_conus(path),
+      soilvars = get_soilvars_conus(path),
+      roads = get_roads_conus(path),
+      rails = get_rails_conus(path),
+      gdd = get_gdd_global(path),
+      prectiming = get_prectiming_global(path)
+    )
+  } else {
+    stop("Invalid domain")
+  }
+  return(rasters)
+}
+
 #' @description Function to reproject, resample, and extend a raster to a base
 #' raster: 30m for CONUS and 1000m for the world.
 #' @param path A character string specifying the path to write the reprojected
@@ -842,27 +883,17 @@ match_to_base <- function(pred, base, domain, path, crop) {
 #' @export
 
 batch_match_to_base <- function(path) {
-  # Get list of global rasters
-  global_rasters <- c(get_topo_global(path), get_landcover_global(path),
-               get_gdd_global(path), get_prectiming_global(path),
-               get_pop_global(path), get_roads_global(path),
-               get_rails_global(path), get_soilvars_global(path),
-               get_biovars_global(path))
-               
+  # Get list of rasters
+  global_rasters <- get_rasters(path, domain = "Global")
+
   # Get list of conus rasters
-  conus_rasters <- c(get_topo_conus(path), get_landcover_conus(path),
-                     get_biovars_conus(path), get_pop_conus(path),
-                     get_landsat_evi_conus(path), get_landsat_ndvi_conus(path),
-                     get_par_conus(path), get_soilvars_conus(path),
-                     get_roads_conus(path), get_rails_conus(path))
-
-  # Get list of global rasters for CONUS crop
-  global_rasters_conus <- c(get_gdd_global(path), get_prectiming_global(path))
-
+  conus_rasters <- get_rasters(path, domain = "USA")
+  
   # Get base rasters
   base_global <- lapply(c(1000,2500,5000), function(x) {
     terra::rast(paste0(path, "Raster/Global/pops_sdm_base/base_", x, "m_global_epsg4326.tif"))
   })
+
   base_conus <- lapply(c(30, 100, 250, 500, 1000), function(x) {
     terra::rast(paste0(path, "Raster/USA/pops_sdm_base/base_", x, "m_conus_epsg4326.tif"))
   })
@@ -876,13 +907,56 @@ batch_match_to_base <- function(path) {
   # Use for loop to reproject and resample conus rasters
   for (i in seq_along(conus_rasters)) {
     pred <- conus_rasters[[i]]
-    match_to_base(pred, base = base_conus, domain = "USA", path, crop = FALSE)
-  }
-
-  # Use for loop to crop to CONUS reproject and resample global rasters
-  for (i in seq_along(global_rasters)) {
-    pred <- global_rasters_conus[[i]]
-    match_to_base(pred, base = base_conus, domain = "USA", path, crop = TRUE)
+    if (names(conus_rasters)[i] %in% c("gdd", "prectiming")) {
+      match_to_base(pred, base = base_conus, domain = "USA", path, crop = TRUE)
+    } else {
+      match_to_base(pred, base = base_conus, domain = "USA", path, crop = FALSE)
+    }
   }
 }
 
+#' @description Function to retrieve resampled rasters based on domain and res.
+#' @param path A character string specifying the path to write the rasters.
+#' @param domain A character string specifying the domain (Global or USA).
+#' @param res A numeric vector specifying the resolutions to reproject and
+#' resample the rasters to.
+#' @return A list of resampled rasters.
+#' @export
+
+get_resampled_rasters <- function(path, domain, res) {
+  if (domain == "Global") {
+    rasters <- get_rasters(path, domain = "Global")
+    files <- lapply(rasters, function(x) {
+      get_filename(x, domain, path)
+    })
+    # Grep files based on res
+    resampled_rasters <- lapply(files, function(x) {
+      lapply(res, function(y) {
+        terra::rast(x[grep(paste0(y, "m"), x)])
+      })
+    })
+  } else if (domain == "USA") {
+    rasters <- get_rasters(path, domain = "USA")
+    files <- lapply(rasters, function(x) {
+      get_filename(x, domain, path)
+    })
+    # Grep files based on res
+    resampled_rasters <- lapply(files, function(x) {
+      lapply(res, function(y) {
+        terra::rast(x[grep(paste0(y, "m"), x)])
+      })
+    })
+  } else {
+    stop("Invalid domain")
+  }
+  return(resampled_rasters)
+}
+
+rescale_raster <- function(raster) {
+  # Create function to put into app
+  f <- function(x) ((x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE)))
+  r_rescaled <- terra::app(raster, f)
+  return(r_rescaled)
+}
+
+test <- rescale_raster(resampled_rasters[[1]][[1]])
