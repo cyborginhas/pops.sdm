@@ -822,9 +822,9 @@ match_to_base <- function(pred, base, domain, path, crop) {
                   wopt = list(datatype = d_type, gdal = "COMPRESS=ZSTD"))
       terra::tmpFiles(orphan = TRUE, old = TRUE, remove = TRUE)
       end_time <- Sys.time() # End time
-      time_taken <- (end_time - start_time)/60
+      time_taken <- (end_time - start_time)
       print(paste("Time taken for", basename(filename[i]), ":", time_taken,
-                  "minutes"))
+                  attr(time_taken, "units")))
     }
     msg <- print(paste0(basename(filename), " has been created"))
   } else {
@@ -903,15 +903,15 @@ batch_match_to_base <- function(path) {
     pred <- global_rasters[[i]]
     match_to_base(pred, base = base_global, domain = "Global", path, crop = FALSE)
   }
-
   # Use for loop to reproject and resample conus rasters
   for (i in seq_along(conus_rasters)) {
     pred <- conus_rasters[[i]]
-    if (names(conus_rasters)[i] %in% c("gdd", "prectiming")) {
-      match_to_base(pred, base = base_conus, domain = "USA", path, crop = TRUE)
-    } else {
-      match_to_base(pred, base = base_conus, domain = "USA", path, crop = FALSE)
-    }
+    match_to_base(pred, base = base_conus, domain = "USA", path, crop = FALSE)
+    ## if (names(conus_rasters)[i] %in% c("gdd", "prectiming")) {
+    ##   match_to_base(pred, base = base_conus, domain = "USA", path, crop = TRUE)
+    ## } else {
+    ##   match_to_base(pred, base = base_conus, domain = "USA", path, crop = FALSE)
+    ## }
   }
 }
 
@@ -958,5 +958,3 @@ rescale_raster <- function(raster) {
   r_rescaled <- terra::app(raster, f)
   return(r_rescaled)
 }
-
-test <- rescale_raster(resampled_rasters[[1]][[1]])
