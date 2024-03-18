@@ -1,171 +1,198 @@
 # Load the required packages
-#devtools::install_github('sjevelazco/flexsdm')
 library(flexsdm)
 library(terra)
 library(spatialEco)
 library(dplyr)
-library(bigmemory)
 library(sf)
-path <- "/Volumes/cmjone25/pops_pesthostuse/pops.sdm/Data/"
-# # 1a. import environmental data
-# somevar <- system.file("external/somevar.tif", package = "flexsdm")
-# somevar <- terra::rast(somevar) 
-# names(somevar) <- c("aet", "cwd", "tmx", "tmn")
+library(data.table)
+library(spThin)
 
-# 1b. import environmental data
-somevar <- list.files(paste0(path,"Raster/USA"), recursive = TRUE, full.names = TRUE)
-# Retain 30m resolution only
-somevar <- somevar[grep("30m", somevar)]
-# Keep "bioclimatic", "SRTMGL1", "landsat", "modis", "nlcd", "polaris", "tiger", "meta_pop"
-numvar <- somevar[grep("bioclimatic|SRTMGL1|landsat|modis|polaris|tiger|meta_pop", somevar)]
-numvar <- terra::rast(numvar)
-r <- numvar[[1]]
+path <- "D:/blaginh/"
+species <- "Ailanthus altissima"
+sp_region <- vect(paste0(path, "host_map/studyext/ext25_states_mask.gpkg"))
 
-# Define the bounding box
-bbox <- ext(r)
+format_species_name <- function(species) {
+  # Replace " " with "_" in species name
+  species <- gsub(" ", "_", species)
+  # ensure the first letter is in uppercase and the rest are in lowercase
+  species <- tolower(species)
+  # make first letter uppercase
+  species <- paste0(toupper(substr(species, 1, 1)), substr(species, 2, nchar(species)))
+  return(species)
+}
 
-# Create the grid
-grid <- st_make_grid(bbox, cellsize = c(10, 10))
+species <- format_species_name(species)
 
-# Convert to sf object
-grid <- st_sf(grid)
+#' 1a. import environmental data
+var_paths <- list.files(paste0(path, "host_map/predictors"),
+                        recursive = TRUE, full.names = TRUE, pattern = "1000m")
+# remove landcoverrc
+var_paths <- var_paths[!grepl("landcoverrc", var_paths)]
+vars <- rast(var_paths)
+names(vars)[9:11] <- c("soils_pH", "soils_1500kPa", "soils_33kPa")
 
-# Pull out first polygon
-poly <- grid[1, ]
+#' 2a. import species occurence data
+occs_paths <- list.files(paste0(path, "pops.sdm/Data/Table/Global"),
+                         pattern = species, recursive = TRUE,
+                         full.names = TRUE)
 
-r1 <- extract(r, grid[1,], raw = TRUE, na.rm = TRUE)
+occs <- lapply(occs_paths, function(x) {
+  dt <- fread(x)
+  # convert all columns to character
+  dt <- dt[, lapply(.SD, as.character)]
+  dt <- unique(dt)
+})
 
-# Create a big.matrix
-large_matrix <- big.matrix(nrow = 92124, ncol = 214317, init = 0)
+occs <- rbindlist(occs)
 
+# Convert date to date format, p_a, lat, lon to numeric
+occs[, c("date", "p_a", "lat", "lon") := lapply(.SD, as.numeric),
+     .SDcols = c("date", "p_a", "lat", "lon")]
 
+# Drop rows with NA in lat and lon
+occs <- occs[!is.na(lat) & !is.na(lon)]
+# Drop rows with year < 1990
+#occs <- occs[date >= 1990]
+occs <- occs[p_a == 1]
 
-# 2. import species occurence data (presence-only)
-data(hespero)
-hespero <- hespero %>% dplyr::select(-id)
+# Convert to terra object; retain lat, lon, p_a
+occs <- unique(occs[, .(x = lon, y = lat, pr_ab = p_a)])
 
-# 3. Import study area - California ecoregions
-regions <- system.file("external/regions.tif", package = "flexsdm")
-regions <- terra::rast(regions)
-regions <- as.polygons(regions)
-sp_region <- terra::subset(regions, regions$category == "SCR") # ecoregion where *Hesperocyparis stephensonii* is found
-
-# visualize the species occurrences
-plot(
-  sp_region,
-  col = "gray80",
-  legend = FALSE,
-  axes = FALSE,
-  main = "Hesperocyparis stephensonii occurrences"
-)
-points(hespero[, c("x", "y")], col = "black", pch = 16)
-cols <- rep("gray80", 8)
-cols[regions$category == "SCR"] <- "yellow"
-terra::inset(
-  regions,
-  loc = "bottomleft",
-  scale = .3,
-  col = cols
-)
-
-# 4. delimit calibration area using buffer method
-
+# 3. delimit calibration area using buffer method
 ca <- calib_area(
-  data = hespero,
+  data = occs,
   x = "x",
   y = "y",
-  method = c('buffer', width=25000),
-  crs = crs(somevar)
+  method = c('buffer', width = 100000),
+  crs = crs(vars[[1]])
 )
 
-# visualize the species occurrences & calibration area
-plot(
-  sp_region,
-  col = "gray80",
-  legend = FALSE,
-  axes = FALSE,
-  main = "Calibration area and occurrences")
-plot(ca, add=TRUE)
-points(hespero[,c("x", "y")], col = "black", pch = 16)
+#' Crop the calibration area to fall within the sp_region outline
+ca <- terra::intersect(ca, sp_region)
+# Convert to terra object; retain lat, lon, p_a
+occs.pts <- vect(occs, geom = c("x", "y"), crs = "+proj=longlat +datum=WGS84")
+occs.pts <- cbind(occs.pts, occs[, .(x, y)])
 
+# Keep all records within the study extent polygon
+occs.pts <- terra::intersect(occs.pts, ca)
+occs <- as.data.table(occs.pts)
 
-# 5. Sample the same number of species presences w/in the calibration area
-set.seed(10)
-psa <- sample_pseudoabs(
-  data = hespero,
-  x = "x",
-  y = "y",
-  n = sum(hespero$pr_ab),
-  method = "random",
-  rlayer = somevar,
-  calibarea = ca
-)
+#' 4. Filter occurrence data by cell size
+occs_f <- occfilt_geo(occs, "x", "y", env_layer = vars[[1]],
+                      method =  c("cellsize", factor = "1"))
 
-# Visualize species presences and pseudo-absences
-plot(
-  sp_region,
-  col = "gray80",
-  legend = FALSE,
-  axes = FALSE,
-  xlim = c(289347, 353284),
-  ylim = c(-598052,  -520709),
-  main = "Presence = yellow, Pseudo-absence = black")
-plot(ca, add=TRUE)
-points(psa[,c("x", "y")], cex=0.8, pch=16, col = "black") # Pseudo-absences
-points(hespero[,c("x", "y")], col = "yellow", pch = 16, cex = 1.5) # Presences
-
-# Bind a presences and pseudo-absences
-hespero_pa <- bind_rows(hespero, psa)
-hespero_pa # Presence-Pseudo-absence database
-
-set.seed(10)
-
-# 6. Setup data partitioning - repeated K-fold method
-hespero_pa2 <- part_random(
-  data = hespero_pa,
-  pr_ab = "pr_ab",
-  method = c(method = "rep_kfold", folds = 5, replicates = 10)
-)
-
-# 7. Extract environmental data
-
-hespero_pa3 <-
-  sdm_extract(
-    data = hespero_pa2,
-    x = 'x',
-    y = 'y',
-    env_layer = somevar,
-    variables = c('aet', 'cwd', 'tmx', 'tmn')
+#' 5. Sample the same number of species presences w/in the calibration area
+occ_part <- occs_f %>%
+  part_sblock(
+    data = .,
+    env_layer = vars,
+    pr_ab = "pr_ab",
+    x = "x",
+    y = "y",
+    n_part = 4,
+    min_res_mult = 10,
+    max_res_mult = 500,
+    num_grids = 20,
+    prop = 1
   )
 
+occs_f <- occ_part$part
+block_layer <- get_block(env_layer = vars, best_grid = occ_part$grid)
+
+psa <- lapply(1:4, function(x) {
+  sample_pseudoabs(
+    data = abies_pf,
+    x = "x",
+    y = "y",
+    n = sum(abies_pf$.part == x),
+    method = "random",
+    rlayer = block_layer,
+    maskval = x,
+    calibarea = ca
+  )
+}) %>%
+  bind_rows()
+
+psa <- sdm_extract(data = psa, x = "x", y = "y", env_layer = block_layer)
+occs_pa <- bind_rows(occs_f, psa)
+
+# 7. Extract environmental data
+occs_pa3 <-
+  sdm_extract(
+    data = all_points,
+    x = 'x',
+    y = 'y',
+    env_layer = vars,
+  )
+
+# 8. Run create_clusters.R
+cluster_dt <- cluster_analysis(vars, sample_size = ncell(vars[[1]]), mincor = 0.5)
+combinations <- generate_combinations(cluster_dt$var, cluster_dt$cluster)
+
+# create empty list to store results
+preds <- list()
+
+# pull out the first item in each column
+for (i in 1:nrow(combinations)) {
+  combo <- unlist(lapply(combinations, function(x) x[i]))
+  preds[[i]] <- as.character(combo)
+}
+
 # 8. Fit models - GLM, GBM, SVM with max sens/spec threshold
+
 mglm <-
   fit_glm(
-    data = hespero_pa3,
+    data = occs_pa3,
     response = 'pr_ab',
-    predictors = c('aet', 'cwd', 'tmx', 'tmn'),
+    predictors = preds[[1]],
     partition = '.part',
     thr = 'max_sens_spec' # same as max TSS
   )
 
+
 mgbm <- fit_gbm(
-  data = hespero_pa3,
+  data = occs_pa3,
   response = 'pr_ab',
-  predictors = c('aet', 'cwd', 'tmx', 'tmn'),
+  predictors = preds,
   partition = '.part',
   thr = 'max_sens_spec'
 )
 
 msvm <-  fit_svm(
-  data = hespero_pa3,
+  data = occs_pa3,
   response = 'pr_ab',
-  predictors = c('aet', 'cwd', 'tmx', 'tmn'),
+  predictors = preds,
   partition = '.part',
   thr = 'max_sens_spec'
 )
 
 # 8. Ensemble models
+eglm  <-
+  esm_glm(
+    data = occs_pa3,
+    response = 'pr_ab',
+    predictors = preds,
+    partition = '.part',
+    thr = 'max_sens_spec'
+  )
+  
+egbm <- esm_gbm(
+  data = occs_pa3,
+  response = 'pr_ab',
+  predictors = preds,
+  partition = '.part',
+  thr = 'max_sens_spec'
+)
 
+esvm <-  esm_svm(
+  data = occs_pa3,
+  response = 'pr_ab',
+  predictors = preds,
+  partition = '.part',
+  thr = 'max_sens_spec'
+)
+
+# 9. Predict models
 eglm  <-
   esm_glm(
     data = hespero_pa3,
@@ -174,22 +201,6 @@ eglm  <-
     partition = '.part',
     thr = 'max_sens_spec'
   )
-  
-egbm <- esm_gbm(
-  data = hespero_pa3,
-  response = 'pr_ab',
-  predictors = c('aet', 'cwd', 'tmx', 'tmn'),
-  partition = '.part',
-  thr = 'max_sens_spec'
-)
-
-esvm <-  esm_svm(
-  data = hespero_pa3,
-  response = 'pr_ab',
-  predictors = c('aet', 'cwd', 'tmx', 'tmn'),
-  partition = '.part',
-  thr = 'max_sens_spec'
-)
 
 mpred <- sdm_predict(
   models = list(mglm, mgbm, msvm),
@@ -198,31 +209,8 @@ mpred <- sdm_predict(
   predict_area = ca
 )
   
-# 9. Predictions
-
-eglm_pred <- sdm_predict(
-  models = eglm ,
-  pred = somevar,
-  con_thr = TRUE,
-  predict_area = ca
-)
-
-egbm_pred <- sdm_predict(
-  models = egbm ,
-  pred = somevar,
-  con_thr = TRUE,
-  predict_area = ca
-)
-
-esvm_pred <- sdm_predict(
-  models = esvm,
-  pred = somevar,
-  con_thr = TRUE,
-  predict_area = ca
-)
-
-# 10. Summarize models
-merge_df <- sdm_summarize(models = list(mglm, mgbm, msvm, eglm, egbm, esvm))
+# 9. Summarize models
+merge_df <- sdm_summarize(models = list(mglm, mgbm, msvm))
 
 knitr::kable(
   merge_df %>% dplyr::select(
@@ -235,5 +223,11 @@ knitr::kable(
   )
 )
 
+#' Predict models
 
-
+mpred <- sdm_predict(
+  models = list(mglm, mgbm, msvm),
+  pred = vars,
+  con_thr = TRUE,
+  predict_area = ca
+)
