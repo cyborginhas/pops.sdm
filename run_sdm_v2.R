@@ -1,15 +1,16 @@
-# Load the required packages
+#' Load the required packages
 library(flexsdm)
 library(terra)
 library(spatialEco)
 library(dplyr)
 library(sf)
 library(data.table)
-library(spThin)
+library(foreach)
+library(doParallel)
 
-path <- "D:/blaginh/"
+path <- "~/Desktop/pops_pesthostuse/"
 species <- "Ailanthus altissima"
-sp_region <- vect(paste0(path, "host_map/studyext/ext25_states_mask.gpkg"))
+sp_region <- vect(paste0(path, "/studyext/ext25_states_mask.gpkg"))
 
 format_species_name <- function(species) {
   # Replace " " with "_" in species name
@@ -24,17 +25,21 @@ format_species_name <- function(species) {
 species <- format_species_name(species)
 
 #' 1a. import environmental data
-var_paths <- list.files(paste0(path, "host_map/predictors"),
-                        recursive = TRUE, full.names = TRUE, pattern = "1000m")
-# remove landcoverrc
-var_paths <- var_paths[!grepl("landcoverrc", var_paths)]
+var_paths <- list.files(paste0(path, "/predictors"),
+  recursive = TRUE, full.names = TRUE, pattern = "1000m"
+)
+
+#' remove bio1|bio2|bio3|bio4|bio6|bio7|bio12|bio14|bio15|bio19
+var_paths <- var_paths[!grepl("bio1_|bio2_|bio3_|bio4_|bio6_|bio7_|bio12|bio14|bio15|bio19", var_paths)]
+var_paths <- var_paths[!grepl("built|cropland|decid|everg|grassl|pasture|shrubs|wetland", var_paths)]
 vars <- rast(var_paths)
-names(vars)[9:11] <- c("soils_pH", "soils_1500kPa", "soils_33kPa")
+names(vars)[1:3] <- c("soils_pH", "soils_1500kPa", "soils_33kPa")
 
 #' 2a. import species occurence data
-occs_paths <- list.files(paste0(path, "pops.sdm/Data/Table/Global"),
-                         pattern = species, recursive = TRUE,
-                         full.names = TRUE)
+occs_paths <- list.files(paste0(path, "Table/Global"),
+  pattern = species, recursive = TRUE,
+  full.names = TRUE
+)
 
 occs <- lapply(occs_paths, function(x) {
   dt <- fread(x)
@@ -47,12 +52,11 @@ occs <- rbindlist(occs)
 
 # Convert date to date format, p_a, lat, lon to numeric
 occs[, c("date", "p_a", "lat", "lon") := lapply(.SD, as.numeric),
-     .SDcols = c("date", "p_a", "lat", "lon")]
+  .SDcols = c("date", "p_a", "lat", "lon")
+]
 
 # Drop rows with NA in lat and lon
 occs <- occs[!is.na(lat) & !is.na(lon)]
-# Drop rows with year < 1990
-#occs <- occs[date >= 1990]
 occs <- occs[p_a == 1]
 
 # Convert to terra object; retain lat, lon, p_a
@@ -63,12 +67,13 @@ ca <- calib_area(
   data = occs,
   x = "x",
   y = "y",
-  method = c('buffer', width = 100000),
+  method = c("buffer", width = 100000),
   crs = crs(vars[[1]])
 )
 
 #' Crop the calibration area to fall within the sp_region outline
 ca <- terra::intersect(ca, sp_region)
+
 # Convert to terra object; retain lat, lon, p_a
 occs.pts <- vect(occs, geom = c("x", "y"), crs = "+proj=longlat +datum=WGS84")
 occs.pts <- cbind(occs.pts, occs[, .(x, y)])
@@ -78,33 +83,37 @@ occs.pts <- terra::intersect(occs.pts, ca)
 occs <- as.data.table(occs.pts)
 
 #' 4. Filter occurrence data by cell size
-occs_f <- occfilt_geo(occs, "x", "y", env_layer = vars[[1]],
-                      method =  c("cellsize", factor = "1"))
+occs_f <- occfilt_geo(occs, "x", "y",
+  env_layer = vars[[1]],
+  method = c("cellsize", factor = "1")
+)
 
-#' 5. Sample the same number of species presences w/in the calibration area
+#' 5. Spatial block partitioning
 occ_part <- occs_f %>%
   part_sblock(
     data = .,
-    env_layer = vars,
+    env_layer = vars[[1]],
     pr_ab = "pr_ab",
     x = "x",
     y = "y",
     n_part = 4,
-    min_res_mult = 10,
-    max_res_mult = 500,
-    num_grids = 20,
+    min_res_mult = 3,
+    max_res_mult = 200,
+    num_grids = 10,
     prop = 1
   )
 
 occs_f <- occ_part$part
+occ_part$best_part_info
 block_layer <- get_block(env_layer = vars, best_grid = occ_part$grid)
 
+# 6. Pseudoabsence sampling
 psa <- lapply(1:4, function(x) {
   sample_pseudoabs(
-    data = abies_pf,
+    data = occs_f,
     x = "x",
     y = "y",
-    n = sum(abies_pf$.part == x),
+    n = sum(occs_f$.part == x),
     method = "random",
     rlayer = block_layer,
     maskval = x,
@@ -117,89 +126,82 @@ psa <- sdm_extract(data = psa, x = "x", y = "y", env_layer = block_layer)
 occs_pa <- bind_rows(occs_f, psa)
 
 # 7. Extract environmental data
-occs_pa3 <-
+occs_pa2 <-
   sdm_extract(
-    data = all_points,
-    x = 'x',
-    y = 'y',
+    data = occs_pa,
+    x = "x",
+    y = "y",
     env_layer = vars,
   )
 
 # 8. Run create_clusters.R
-cluster_dt <- cluster_analysis(vars, sample_size = ncell(vars[[1]]), mincor = 0.5)
+# exclude landcoverrc
+vars2 <- vars[[!grepl("landcoverrc", names(vars))]]
+cluster_dt <- cluster_analysis(vars2, sample_size = ncell(vars[[1]]), mincor = 0.5)
 combinations <- generate_combinations(cluster_dt$var, cluster_dt$cluster)
+predictors <- extract_predictors(combinations)
 
-# create empty list to store results
-preds <- list()
-
-# pull out the first item in each column
-for (i in 1:nrow(combinations)) {
-  combo <- unlist(lapply(combinations, function(x) x[i]))
-  preds[[i]] <- as.character(combo)
-}
 
 # 8. Fit models - GLM, GBM, SVM with max sens/spec threshold
+# How many cores does your CPU have
+n_cores <- detectCores()
+n_cores
+# Register cluster
+cluster <- makeCluster(n_cores - 1)
+registerDoParallel(cluster)
 
-mglm <-
-  fit_glm(
-    data = occs_pa3,
-    response = 'pr_ab',
-    predictors = preds[[1]],
-    partition = '.part',
-    thr = 'max_sens_spec' # same as max TSS
-  )
+s <- Sys.time()
+mglm <- foreach(i = 1:length(predictors), .packages = c("glmnet", "caret")) %dopar% {
+  flexsdm::fit_glm(
+    data = occs_pa2,
+    response = "pr_ab",
+    predictors = predictors[[i]],
+    partition = ".part",
+    thr = "max_sens_spec" # same as max TSS
+    )
+}
+t <- Sys.time() - s
+stopCluster(cl = cluster)
+print(t)
 
+mglm_sum <- as.data.table(mglm_sum)
+mglm_sum[order(-TSS_mean)]
 
-mgbm <- fit_gbm(
-  data = occs_pa3,
-  response = 'pr_ab',
-  predictors = preds,
-  partition = '.part',
-  thr = 'max_sens_spec'
-)
-
-msvm <-  fit_svm(
-  data = occs_pa3,
-  response = 'pr_ab',
-  predictors = preds,
-  partition = '.part',
-  thr = 'max_sens_spec'
-)
 
 # 8. Ensemble models
-eglm  <-
+eglm <-
   esm_glm(
     data = occs_pa3,
-    response = 'pr_ab',
+    response = "pr_ab",
     predictors = preds,
-    partition = '.part',
-    thr = 'max_sens_spec'
+    partition = ".part",
+    thr = "max_sens_spec"
   )
-  
+
 egbm <- esm_gbm(
   data = occs_pa3,
-  response = 'pr_ab',
+  response = "pr_ab",
   predictors = preds,
-  partition = '.part',
-  thr = 'max_sens_spec'
+  partition = ".part",
+  thr = "max_sens_spec"
 )
 
-esvm <-  esm_svm(
+esvm <- esm_svm(
   data = occs_pa3,
-  response = 'pr_ab',
+  response = "pr_ab",
   predictors = preds,
-  partition = '.part',
-  thr = 'max_sens_spec'
+  partition = ".part",
+  thr = "max_sens_spec"
 )
 
 # 9. Predict models
-eglm  <-
+eglm <-
   esm_glm(
     data = hespero_pa3,
-    response = 'pr_ab',
-    predictors = c('aet', 'cwd', 'tmx', 'tmn'),
-    partition = '.part',
-    thr = 'max_sens_spec'
+    response = "pr_ab",
+    predictors = c("aet", "cwd", "tmx", "tmn"),
+    partition = ".part",
+    thr = "max_sens_spec"
   )
 
 mpred <- sdm_predict(
@@ -208,7 +210,7 @@ mpred <- sdm_predict(
   con_thr = TRUE,
   predict_area = ca
 )
-  
+
 # 9. Summarize models
 merge_df <- sdm_summarize(models = list(mglm, mgbm, msvm))
 

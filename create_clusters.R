@@ -25,29 +25,65 @@ cluster_analysis <- function(data, sample_size = 1000000, mincor = 0.5) {
     cluster_dt <- rbind(singles, multis, multisfix)
     cluster_dt <- cluster_dt[, .(var, cluster)]
     cluster_dt <- cluster_dt[order(cluster_dt$cluster, cluster_dt$var)]
-    lc_row <- as.data.table(cbind(var = "landcoverrc", cluster = max(cluster_dt$cluster) + 1))
-    cluster_dt <- rbind(cluster_dt, lc_row)
+    #lc_row <- as.data.table(cbind(var = "landcoverrc", cluster = max(cluster_dt$cluster) + 1))
+    #cluster_dt <- rbind(cluster_dt, lc_row)
     
     return(cluster_dt)
 }
+vars <- cluster_dt$var
+clusters <- cluster_dt$cluster
 
 generate_combinations <- function(vars, clusters) {
-  # Combine variables and clusters into a data frame
-  var_clusters <- data.frame(var = vars, cluster = clusters)
+  # Ensure clusters are treated as characters for consistent indexing
+  clusters <- as.character(clusters)
   
-  # Split variables by clusters
-  split_vars <- split(var_clusters$var, var_clusters$cluster)
+  # Split the variables by their cluster
+  split_vars <- split(vars, clusters)
   
-  # Generate all combinations of selecting one variable from each unique cluster
-  # If the actual clusters are not consecutive numbers or there are gaps, this still works
-  combo_list <- lapply(split_vars, function(x) x)
+  # Prepare a list to store the combinations for each cluster count
+  all_combinations <- list()
   
-  # Use do.call with expand.grid to dynamically generate combinations
-  combos <- do.call(expand.grid, combo_list)
+  # Get all unique cluster numbers
+  unique_clusters <- unique(clusters)
   
-  # Rename columns for clarity based on cluster numbers
-  cluster_names <- paste0('Cluster', seq_along(combo_list))
-  colnames(combos) <- cluster_names
+  # Generate combinations for selecting clusters
+  for (num_clusters in 1:length(unique_clusters)) {
+    cluster_combos <- combn(unique_clusters, num_clusters, simplify = FALSE)
+    
+    # Generate variable combinations for each cluster combination
+    for (cluster_combo in cluster_combos) {
+      # Get the variables for the current combination of clusters
+      vars_in_combo <- lapply(cluster_combo, function(cluster) split_vars[[as.character(cluster)]])
+      
+      # Generate all combinations of these variables across the selected clusters
+      if (length(vars_in_combo) > 0) {
+        var_combos <- expand.grid(vars_in_combo, stringsAsFactors = FALSE)
+        
+        # Create a unique key for the combination
+        key <- paste(cluster_combo, collapse = "-")
+        all_combinations[[key]] <- var_combos
+      }
+    }
+  }
   
-  return(combos)
+  return(all_combinations)
+}
+
+# Function to extract each row of the combinations as a vector of predictors
+extract_predictors <- function(combinations) {
+  predictors_list <- list() # Initialize an empty list to store the vectors
+  
+  # Iterate over each element in the combinations list
+  combination_names <- names(combinations)
+  for (name in combination_names) {
+    combination <- combinations[[name]] # Access the combination data frame
+    
+    # Iterate over each row in the combination data frame
+    for (i in 1:nrow(combination)) {
+      row_as_vector <- as.character(unlist(combination[i, ])) # Convert row to vector
+      predictors_list[[paste(name, i, sep = "_")]] <- row_as_vector # Store the vector
+    }
+  }
+  
+  return(predictors_list)
 }
