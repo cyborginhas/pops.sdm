@@ -273,13 +273,8 @@ get_landcover_global <- function(path) {
 #' @export
 
 get_landcover_conus <- function(path) {
-  landcover_types <- c("built", "deciduous", "evergreen", "trees", "shrubs",
-                       "grassland", "pasture", "cropland", "cultivated",
-                       "wetland")
   fn <- c(paste0(path, "Original/nlcd/nlcd_2021_land_cover_l48_20230630.tif"),
-          paste0(path, "Raster/USA/nlcd/nlcd_2021_land_cover_l48_",
-                 landcover_types,
-                 ".tif"))
+          paste0(path, "Raster/USA/nlcd/nlcd_2021_land_cover_l48.tif"))
   if (!all(file.exists(fn))) {
     url <- "https://s3-us-west-2.amazonaws.com/mrlc/nlcd_2021_land_cover_l48_20230630.zip" # nolint: line_length_linter.
     # Download zip file
@@ -296,40 +291,17 @@ get_landcover_conus <- function(path) {
       overwrite = TRUE, gdal = "COMPRESS=ZSTD",
       filename = fn, datatype = "INT1U"
     )
-    # Define landcover types and corresponding reclassification rules
-    reclass_rules <- list(
-      built = rbind(c(1, 20, 0), c(21, 24, 1), c(25, 255, 0)), #21, 22, 23, 24
-      decid = rbind(c(1, 40, 0), c(41, 41, 1), c(42, 42, 0),
-                    c(43, 43, 1), c(44, 255, 0)), #41, 43
-      everg = rbind(c(1, 41, 0), c(42, 43, 1), c(44, 255, 0)), #42, 43
-      trees = rbind(c(1, 40, 0), c(41, 43, 1), c(44, 255, 0)), #41, 42, 43
-      shrub = rbind(c(1, 51, 0), c(52, 52, 1), c(53, 255, 0)), #52
-      grass = rbind(c(1, 70, 0), c(71, 71, 1), c(72, 255, 0)), #71
-      pastr = rbind(c(1, 80, 0), c(81, 81, 1), c(82, 255, 0)), #81
-      cropl = rbind(c(1, 81, 0), c(82, 82, 1), c(83, 255, 0)), #82
-      culti = rbind(c(1, 80, 0), c(81, 82, 1), c(83, 255, 0)), #81, 82
-      wetld = rbind(c(1, 89, 0), c(90, 90, 1), c(91, 94, 0), c(95, 95, 1),
-                    c(96, 255, 0)) #90, 95
-    )
-    for (i in seq_along(landcover_types)) {
-      reclass_rule <- reclass_rules[[i]]
-      dir.create(dirname(fn[2]), showWarnings = FALSE, recursive = TRUE)
-      output_file <- paste0(dirname(fn[2]), "/nlcd_2021_land_cover_l48_",
-                            landcover_types[i], ".tif")
-      start_time <- Sys.time() # Start time
-      r <- terra::classify(landcover, reclass_rule, right = NA, others = NA)
-      l48 <- get_l48_boundary()
-      l48 <- sf::st_transform(l48, crs = terra::crs(r))
-      r <- terra::crop(r, terra::vect(l48), mask = TRUE)
-      names(r) <- landcover_types[i]
-      terra::writeRaster(r,
-        overwrite = TRUE, gdal = "COMPRESS=ZSTD",
-        filename = output_file, datatype = "INT1U"
-      )
-      end_time <- Sys.time() # End time
-      time_taken <- end_time - start_time
-      print(paste("Time taken for", landcover_types[i], ":", time_taken))
-    }
+    m <- c(0, 20, 0, 21, 24, 1, 25, 40, 0, 41, 41, 2, 42, 42, 3, 43, 43, 4, 44,
+           51, 0, 52, 52, 5, 53, 70, 0, 71, 71, 6, 72, 80, 0, 81, 81, 7, 82,
+           82, 8, 83, 89, 0, 90, 90, 9, 91, 94, 0, 95, 95, 9, 96, 255, 0)
+    rclmat <- matrix(m, ncol = 3, byrow = TRUE)
+    landcover <- terra::classify(landcover, rclmat, right = NA)
+    dir.create(dirname(fn[2]), showWarnings = FALSE, recursive = TRUE)
+    output_file <- paste0(dirname(fn[2]), "/nlcd_2021_land_cover_l48.tif")
+    l48 <- get_l48_boundary()
+    l48 <- sf::st_transform(l48, crs = terra::crs(landcover))
+    terra::writeRaster(landcover, overwrite = TRUE, gdal = "COMPRESS=ZSTD",
+                       filename = output_file, datatype = "INT1U")
   } else {
     landcover <- lapply(fn[-1], terra::rast)
   }
