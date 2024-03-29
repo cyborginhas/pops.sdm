@@ -9,7 +9,7 @@ library(foreach)
 library(doParallel)
 
 path <- "~/Desktop/pops_pesthostuse/"
-species <- "Ailanthus altissima"
+species <- "Acer rubrum"
 sp_region <- vect(paste0(path, "/studyext/ext25_states_mask.gpkg"))
 
 format_species_name <- function(species) {
@@ -73,13 +73,20 @@ ca <- calib_area(
 
 #' Crop the calibration area to fall within the sp_region outline
 ca <- terra::intersect(ca, sp_region)
-
+writeVector(ca, paste0(path, "/hostmap/", species, "_calib_area.gpkg"))
 # Convert to terra object; retain lat, lon, p_a
 occs.pts <- vect(occs, geom = c("x", "y"), crs = "+proj=longlat +datum=WGS84")
 occs.pts <- cbind(occs.pts, occs[, .(x, y)])
 
 # Keep all records within the study extent polygon
 occs.pts <- terra::intersect(occs.pts, ca)
+
+# Create grid polygons using sf
+bbox <- st_bbox(occs.pts, crs = st_crs(occs.pts))
+bbox <- st_as_sfc(bbox)
+
+
+
 occs <- as.data.table(occs.pts)
 
 #' 4. Filter occurrence data by cell size
@@ -134,13 +141,15 @@ occs_pa2 <-
     env_layer = vars,
   )
 
+saveRDS(occs_pa2, paste0(path, "/hostmap/", species, "_occs_pa2.RData"))
+
 # 8. Run create_clusters.R
 # exclude landcoverrc
 vars2 <- vars[[!grepl("landcoverrc", names(vars))]]
 cluster_dt <- cluster_analysis(vars2, sample_size = ncell(vars[[1]]), mincor = 0.5)
 combinations <- generate_combinations(cluster_dt$var, cluster_dt$cluster)
 predictors <- extract_predictors(combinations)
-
+saveRDS(predictors, paste0(path, "/hostmap/", species, "_predictors.RData"))
 
 # 8. Fit models - GLM, GBM, SVM with max sens/spec threshold
 # How many cores does your CPU have
