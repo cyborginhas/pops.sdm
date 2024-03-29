@@ -16,7 +16,8 @@ library(terra)
 cluster_analysis <- function(data, sample_size, mincor, categorical_vars) {
   # Sample data
   sample <- terra::spatSample(data, size = sample_size, method = "regular",
-                       as.df = TRUE, na.rm = TRUE, values = TRUE, xy = TRUE)
+                              as.df = TRUE, na.rm = TRUE, values = TRUE,
+                              xy = TRUE)
   # Perform cluster analysis
   if (!is.null(categorical_vars)) {
     ccres <- klaR::corclust(sample[, -c(1:2)], categorical_vars)
@@ -31,7 +32,7 @@ cluster_analysis <- function(data, sample_size, mincor, categorical_vars) {
 
   # Reassign clusters
   cluster_dt[, clustercount := .N, by = .(cluster)]
-  singles <- cluster_dt[cluster_dt$clustercount == 1 & 
+  singles <- cluster_dt[cluster_dt$clustercount == 1 &
                           cluster_dt$av.cor2closest < mincor]
   multis <- cluster_dt[cluster_dt$clustercount > 1]
   multisfix <- multis[av.cor2closest > mincor, ]
