@@ -41,48 +41,50 @@ get_biovars_global <- function(path) {
 #' @return A raster with 19 biovariable layers for CONUS.
 #' @export
 
-## get_biovars_conus <- function(path) {
-##   bio_names <- c(paste0("bio", 1:4), "bio4a", paste0("bio", 5:19))
-##   fn <- paste0(path, "Original/BioClimComposite/BioClimComposite_1971_2000_400m_", bio_names, ".tif") # nolint: line_length_linter.
-##   if (!all(file.exists(fn))) {
-##     sbtools::item_file_download(
-##       sb_id = "4ff32906e4b0e183ef5a2f16", dest_dir =
-##       tempdir(), names = "BioClimComposite_1971_2000_400m.tif", # nolint
-##       destinations = paste0(tempdir(), "BioClimComposite_1971_2000_400m.tif"),
-##       overwrite_file = TRUE
-##     )
-##     biovars <- terra::rast(paste0(
-##       tempdir(),
-##       "BioClimComposite_1971_2000_400m.tif" # nolint
-##     ))
-##     names(biovars) <- c(paste0("bio", 1:4), "bio4a", paste0("bio", 5:19))
-##     dir.create(dirname(fn[1]), showWarnings = FALSE)
-##     # Write each layer to file
-##     lapply(1:terra::nlyr(biovars), function(x) {
-##       terra::writeRaster(biovars[[x]],
-##         overwrite = TRUE, gdal = "COMPRESS=ZSTD",
-##         filename = paste0(dirname(fn[1]), "/BioClimComposite_1971_2000_400m_",
-##                           names(biovars)[x], ".tif"),
-##         datatype = "FLT4S"
-##       )
-##     })
-##   } else {
-##     biovars <- lapply(fn, terra::rast)
-##   }
-##   return(biovars)
-## }
+get_biovars_conus_400m <- function(path) {
+  bio_names <- c(paste0("bio", 1:4), "bio4a", paste0("bio", 5:19))
+  fn <- paste0(path, "Original/BioClimComposite/BioClimComposite_1971_2000_400m_", bio_names, ".tif") # nolint: line_length_linter.
+  if (!all(file.exists(fn))) {
+    sbtools::item_file_download(
+      sb_id = "4ff32906e4b0e183ef5a2f16", dest_dir =
+      tempdir(), names = "BioClimComposite_1971_2000_400m.tif", # nolint
+      destinations = paste0(tempdir(), "BioClimComposite_1971_2000_400m.tif"),
+      overwrite_file = TRUE
+    )
+    biovars <- terra::rast(paste0(
+      tempdir(),
+      "BioClimComposite_1971_2000_400m.tif" # nolint
+    ))
+    names(biovars) <- c(paste0("bio", 1:4), "bio4a", paste0("bio", 5:19))
+    dir.create(dirname(fn[1]), showWarnings = FALSE)
+    # Write each layer to file
+    lapply(1:terra::nlyr(biovars), function(x) {
+      terra::writeRaster(biovars[[x]],
+        overwrite = TRUE, gdal = "COMPRESS=ZSTD",
+        filename = paste0(dirname(fn[1]), "/BioClimComposite_1971_2000_400m_",
+                          names(biovars)[x], ".tif"),
+        datatype = "FLT4S"
+      )
+    })
+  } else {
+    biovars <- lapply(fn, terra::rast)
+  }
+  return(biovars)
+}
 
-#' @description Function to get biovariables for CONUS (USGS biocomposite 15s)
+#' @description Function to get biovariables for CONUS (daymet 1km downscaled 
+#' using elevation in regression)
 #' @param path A character string specifying the path to write the biovars.
 #' @return A raster with 19 biovariable layers for CONUS.
 #' @export
 
-get_biovars_conus <- function(path) {
+get_biovars_conus_ds <- function(path) {
   bio_names <- c(paste0("bio", 1:19))
   fn <- paste0(path, "Raster/USA/bioclimatic/", bio_names, ".tif")
   biovars <- lapply(fn, terra::rast)
   return(biovars)
 }
+
 
 #' @description Function to obtain a vector of CONUS.
 #' @return A vector of CONUS.
@@ -265,7 +267,6 @@ get_landcover_global <- function(path) {
   }
   return(landcover)
 }
-
 #' @description Function to obtain landcover data for CONUS (30m NLCD)
 #' @param path A character string specifying the path to write the landcover
 #' @return A list with landcover rasters: built, deciduous, evergreen, trees,
@@ -345,36 +346,40 @@ get_gdd_global <- function(path) {
   return(gdd)
 }
 
+
 #' @description Function to obtain monthly precip normals for the world
 #' (Worldclim 30s)
 #' Monthly precip normals are used to calculate precipitation timing.
 #' @param path A character string specifying the path to write precip normals
 #' @export
+#' @note This function is not currently used in the package, because it isn't
+#' computing the precipitation timing correctly. The function is left here for
+#' future development.
 
-get_prectiming_global <- function(path) {
-  fn <- c(paste0(path, "Original/wc2.1_30s_prec/wc2.1_30s_prec.tif"),
-          paste0(path, "Raster/Global/wc2.1_30s_prec/wc2.1_30s_prec_timing.tif")) # nolint: line_length_linter.
-  if (!all(file.exists(fn))) {
-    precip <- geodata::worldclim_global(var = "prec", res = 0.5,
-                                        path = tempdir())
-    dir.create(dirname(fn[1]), showWarnings = FALSE, recursive = TRUE)
-    terra::writeRaster(precip,
-      overwrite = TRUE, gdal = "COMPRESS=ZSTD",
-      filename = fn[1], datatype = "INT2S"
-    )
-    precip <- terra::app(x = precip, fun = function(x) {
-      return(sum(x[[12]], x[[1]], x[[2]]) - sum(x[[6]], x[[7]], x[[8]]))
-    })
-    names(precip) <- "PrecipTiming"
-    precip <- terra::writeRaster(precip,
-      filename = paste0(dirname(fn[2]), "/wc2.1_30s_prec_timing.tif"),
-      overwrite = TRUE, datatype = "INT2S", gdal = "COMPRESS=ZSTD"
-    )
-  } else {
-    precip <- terra::rast(fn[2])
-  }
-  return(precip)
-}
+# get_prectiming_global <- function(path) {
+#   fn <- c(paste0(path, "Original/wc2.1_30s_prec/wc2.1_30s_prec.tif"),
+#           paste0(path, "Raster/Global/wc2.1_30s_prec/wc2.1_30s_prec_timing.tif")) # nolint: line_length_linter.
+#   if (!all(file.exists(fn))) {
+#     precip <- geodata::worldclim_global(var = "prec", res = 0.5,
+#                                         path = tempdir())
+#     dir.create(dirname(fn[1]), showWarnings = FALSE, recursive = TRUE)
+#     terra::writeRaster(precip,
+#       overwrite = TRUE, gdal = "COMPRESS=ZSTD",
+#       filename = fn[1], datatype = "INT2S"
+#     )
+#     precip <- terra::app(x = precip, fun = function(x) {
+#       return(sum(x[[12]], x[[1]], x[[2]]) - sum(x[[6]], x[[7]], x[[8]]))
+#     })
+#     names(precip) <- "PrecipTiming"
+#     precip <- terra::writeRaster(precip,
+#       filename = paste0(dirname(fn[2]), "/wc2.1_30s_prec_timing.tif"),
+#       overwrite = TRUE, datatype = "INT2S", gdal = "COMPRESS=ZSTD"
+#     )
+#   } else {
+#     precip <- terra::rast(fn[2])
+#   }
+#   return(precip)
+# }
 
 #' @description Function to download human pop. density for the world
 #' (30s GHS_POP_E2020_GLOBE)
@@ -399,7 +404,6 @@ get_pop_global <- function(path) {
 #' @param path A character string specifying the path to write the pop data
 #' @return A raster with human population density for the world
 #' @export
-
 get_pop_conus <- function(path) {
   fn <- paste0(path, "Original/gpw_v4_population_density/gpw_v4_population_density_rev11_2020_30s.tif")
   pop <- lapply(fn, terra::rast)
@@ -413,7 +417,6 @@ get_pop_conus <- function(path) {
 #' @return A raster with distance to roads or railroads for the world
 #' @import rgee
 #' @export
-
 dist_networks <- function(user, lines, domain, type) {
   ee_Initialize(user, drive = TRUE)
   ee_Authenticate()
@@ -589,7 +592,7 @@ get_rails_global <- function(path, gee_path, user) {
 #' @param path A character string specifying the path to write the rails
 #' @return A euclidean distance raster with rails for the conus.
 #' @export
-
+#' 
 get_rails_conus <- function(path) {
   fn <- paste0(path, "Raster/USA/tiger_railroads/tiger_railroads_dist2rails.tif")
   railroads <- lapply(fn, terra::rast)
@@ -680,11 +683,10 @@ get_soilvars_global <- function(path) {
 #' @param path A character string specifying the path to write soil chars
 #' @return A euclidean distance raster with soil chars for the conus.
 #' @export
-
 get_soilvars_conus <- function(path) {
   chars <- c("alpha", "bd", "clay", "hb", "ksat", "lambda", "n", "om", "ph",
              "sand", "silt", "theta_r", "theta_s")
-  fn <- paste0(path, "Original/polaris_soils/polaris_soils_", chars, "_0_5.tif")
+  fn <- paste0(path, "Original/polaris_soils/", chars, "_mean_0_5.tif")
   soilvars <- lapply(fn, terra::rast)
   return(soilvars)
 }
@@ -750,6 +752,7 @@ get_filename <- function(pred, domain, path) {
   
   return(filename)
 }
+
 
 #' @description Function to reproject, resample, and extend a raster to a base
 #' raster: 30m for CONUS and 1000m for the world.
@@ -922,11 +925,4 @@ get_resampled_rasters <- function(path, domain, res) {
     stop("Invalid domain")
   }
   return(resampled_rasters)
-}
-
-rescale_raster <- function(raster) {
-  # Create function to put into app
-  f <- function(x) ((x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE)))
-  r_rescaled <- terra::app(raster, f)
-  return(r_rescaled)
 }
