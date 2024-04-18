@@ -41,7 +41,7 @@ get_biovars_global <- function(path) {
 #' @return A raster with 19 biovariable layers for CONUS.
 #' @export
 
-get_biovars_conus_400m <- function(path) {
+get_biovars_conus <- function(path) {
   bio_names <- c(paste0("bio", 1:4), "bio4a", paste0("bio", 5:19))
   fn <- paste0(path, "Original/BioClimComposite/BioClimComposite_1971_2000_400m_", bio_names, ".tif") # nolint: line_length_linter.
   if (!all(file.exists(fn))) {
@@ -346,6 +346,16 @@ get_gdd_global <- function(path) {
   return(gdd)
 }
 
+#' @description Function to retrieve gdd for CONUS using daymet 1km downscaled
+#' @param path A character string specifying the path to the gdd raster
+#' @return A raster with growing degree days for CONUS.
+#' @export
+
+get_gdd_conus_ds <- function(path) {
+  fn <- c(paste0(path, "Raster/USA/gdd/gdd.tif"))
+  gdd <- lapply(fn, terra::rast)
+}
+
 
 #' @description Function to obtain monthly precip normals for the world
 #' (Worldclim 30s)
@@ -404,8 +414,9 @@ get_pop_global <- function(path) {
 #' @param path A character string specifying the path to write the pop data
 #' @return A raster with human population density for the world
 #' @export
+
 get_pop_conus <- function(path) {
-  fn <- paste0(path, "Original/gpw_v4_population_density/gpw_v4_population_density_rev11_2020_30s.tif")
+  fn <- paste0(path, "Original/meta_population/meta_population.tif")
   pop <- lapply(fn, terra::rast)
   return(pop)
 }
@@ -832,16 +843,17 @@ get_rasters <- function(path, domain = "Global") {
     rasters <- c(
       topo = get_topo_conus(path),
       landcover = get_landcover_conus(path),
-      biovars = get_biovars_conus(path),
+      biovars_400m = get_biovars_conus(path),
+      biovars_ds = get_biovars_conus_ds(path),
       pop = get_pop_conus(path),
       landsat_evi = get_landsat_evi_conus(path),
       landsat_ndvi = get_landsat_ndvi_conus(path),
       par = get_par_conus(path),
-      soilvars = get_soilvars_conus(path),
+      #soilvars = get_soilvars_conus(path),
       roads = get_roads_conus(path),
       rails = get_rails_conus(path),
-      gdd = get_gdd_global(path),
-      prectiming = get_prectiming_global(path)
+      gdd_ds = get_gdd_conus_ds(path),
+      gdd_1km = get_gdd_global(path)
     )
   } else {
     stop("Invalid domain")
