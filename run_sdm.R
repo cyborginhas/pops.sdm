@@ -1,18 +1,56 @@
 #' 1. Load the required packages
 library(flexsdm)
 library(terra)
-library(spatialEco)
-library(dplyr)
-library(sf)
 library(data.table)
-library(foreach)
-library(doParallel)
+library(dplyr)
 
-#' 2. Load the data
-path <- "~/Desktop/pops_pesthostuse/"
-sp_region <- vect(paste0(path, "/studyext/ext25_states_mask.gpkg"))
-predictors <- readRDS(paste0(path, "hostmap/all_predictors.Rdata"))
+#' 2. Load the data and crop it to the appropriate extent
+og_path <- "Z:/pops_pesthostuse/pops.sdm/Data/"
 
+## rasters <- get_rasters(path, domain = "USA")
+## files <- unlist(lapply(rasters, function(x) {
+##   get_filename(x, "USA", path)
+## }))
+
+## # Pull out all the rasters that are 30m
+## files_30m <- files[grep("30m", files)]
+## files_30m <- files_30m[-1]
+
+# Create a directory for predictors
+pred_path <- "D:/blaginh/new_sdm/predictors/"
+pred_path_fullextent <- "D:/blaginh/new_sdm/predictors/full_extent/"
+pred_path_trunc <- "D:/blaginh/new_sdm/predictors/truncated/"
+studyext_path <- "D:/blaginh/new_sdm/study_extent/"
+
+## dir.create(pred_path_fullextent, showWarnings = FALSE, recursive = TRUE)
+## dir.create(pred_path_trunc, showWarnings = FALSE, recursive = TRUE)
+## dir.create(studyext_path, showWarnings = FALSE, recursive = TRUE)
+
+# Copy the study extent to the study extent directory
+ext25 <- vect("D:/blaginh/new_sdm/study_extent/ext25.gpkg")
+pa <- vect("D:/blaginh/new_sdm/study_extent/pa.gpkg")
+
+# Copy the 30m rasters to the predictors directory; test on one raster
+## for (file in files_30m) {
+##   s <- Sys.time()
+##   # Copy the file to the predictors directory
+##   file.copy(file, pred_path)
+##   copy <- paste0(pred_path, basename(file))
+##   r <- terra::rast(copy)
+##   # Replace the path with the new path
+##   new_filename <- paste0(pred_path_fullextent, basename(copy))
+##   # Replace reproj_30m.tif with 30m_ext25.tif
+##   new_filename <- gsub("reproj_30m.tif", "30m_ext25.tif", new_filename)
+##   dtype <- terra::datatype(r)
+##   # Crop the raster to the study extent
+##   r2 <- terra::crop(r, ext25)
+##   writeRaster(r2, new_filename, overwrite = TRUE, datatype = dtype, gdal = "COMPRESS=ZSTD")
+##   t <- Sys.time() - s
+##   print(paste0("Time taken to crop ", basename(new_filename), ": ", t))
+##   tmpFiles(orphan = TRUE, old = TRUE, remove = TRUE)
+## }
+
+# Function to get species occurrences
 format_species_name <- function(species) {
   # Replace " " with "_" in species name
   species <- gsub(" ", "_", species)
@@ -23,11 +61,135 @@ format_species_name <- function(species) {
   return(species)
 }
 
+get_species_occurrences <- function(species, path) {
+  files <- list.files(paste0(path, "/Table/"), pattern = species, full.names = TRUE, recursive = TRUE)
+  occs <- lapply(files, function(x) {
+    fread(x, colClasses = "character")
+  })
+  occs <- rbindlist(occs, fill = TRUE)
+  occs[, `:=`(lat = as.numeric(lat), lon = as.numeric(lon), date = as.numeric(date), p_a = as.numeric(p_a))]
+  occs <- occs[date > 1990]
+  #occs <- occs[p_a > 0]
+  return(occs)
+}
+
 species <- "Ailanthus altissima"
 species <- format_species_name(species)
 
-ca <- vect(paste0(path, "hostmap/", species,  "_calib_area.gpkg"))
-occs_pa <- readRDS(paste0(path, "hostmap/", species, "_occs_pa2.RData"))
+## occs <- get_species_occurrences(species, og_path)
+## # convert to vector with WGS84 CRS using terra vect()
+## occs_pts <- vect(occs, crs = crs(ext25), geom = c("lon", "lat"))
+## # crop to study extent
+## occs_ext25 <- crop(occs_pts, ext25)
+## # convert back to data.table
+## occs_ext25$lon <- crds(occs_ext25)[, 1]
+## occs_ext25$lat <- crds(occs_ext25)[, 2]
+## occs_ext25 <- as.data.table(occs_ext25)
+## # crop to pa extent
+## occs_pa <- crop(occs_pts, pa)
+## occs_pa$lon <- crds(occs_pa)[, 1]
+## occs_pa$lat <- crds(occs_pa)[, 2]
+## occs_pa <- as.data.table(occs_pa)
+
+## # Export the occurrence data to a csv file
+response_path <- "D:/blaginh/new_sdm/response/"
+## dir.create(paste0(response_path, "full_extent/"),
+##   showWarnings = FALSE,
+##   recursive = TRUE
+## )
+## dir.create(paste0(response_path, "truncated/"),
+##   showWarnings = FALSE,
+##   recursive = TRUE
+## )
+## # write to file
+## write.csv(occs_ext25, paste0(
+##   response_path, "full_extent/", species,
+##   "_occ_ext25.csv"
+## ), row.names = FALSE)
+## write.csv(occs_pa, paste0(response_path, "truncated/", species, "_occ_pa.csv"),
+##   row.names = FALSE
+## )
+
+#' 3. Load the cropped predictors and response data
+somevar <- list.files(pred_path_trunc, full.names = TRUE)
+# Continuous predictors
+somevar_cont <- somevar[!grepl("nlcd|BioClimComposite|wc2.1|dist2", somevar)]
+somevar_cont <- rast(somevar_cont)
+# Categorical predictors
+somevar_cat <- somevar[grepl("nlcd", somevar)]
+somevar_cat <- rast(somevar_cat)
+names(somevar_cat) <- "nlcd"
+# Bias corrections
+somevar_bias <- somevar[grepl("dist2", somevar)]
+somevar_bias <- rast(somevar_bias)
+
+# Response data
+sp_region <- pa
+species <- "Ailanthus_altissima"
+spp1 <- fread(paste0(response_path, "truncated/", species, "_occ_pa.csv"))
+# Re-label lon and lat as x and y
+setnames(spp1, c("lon", "lat"), c("x", "y"))
+
+#' 4. Preprocess the data: geographic data fitering to offset sampling bias
+base_raster <- somevar_cat[[1]]
+# Ifel >0 is 1, else 0
+base_raster <- ifel(base_raster > 0, 1, 0)
+# Turn all na into 0
+base_raster <- ifel(is.na(base_raster), 0, base_raster)
+
+filt_geo <- occfilt_geo(
+  data = spp1,
+  x = "x",
+  y = "y",
+  env_layer = base_raster,
+  method = c("cellsize", factor = "1"), # coarser resolution than the provided raster
+  prj = crs(base_raster)
+)
+
+#' 6. Create a spatial-block partition for the data based on continuous predictors
+no_parts <- 4
+sp_part3 <- part_sblock(
+  env_layer = base_raster,
+  data = filt_geo,
+  x = "x",
+  y = "y",
+  pr_ab = "p_a",
+  min_res_mult = 10, # Minimum value used for multiplying raster resolution and define the finest resolution to be tested
+  max_res_mult = 1000, # Maximum value used for multiplying raster resolution and define the coarsest resolution to be tested
+  num_grids = 100, # Number of grid to be tested between min_res_mult X (raster resolution) and max_res_mult X (raster resolution)
+  n_part = no_part, # Number of partitions
+  prop = 0.5, # Proportion of points used for testing autocorrelation between groups (0-1)
+  min_occ = floor(length(filt_geo$fkey)/(no_part*2)) # Minimum number of occurrences to be used in each partition
+)
+plot(sp_part3$grid)
+
+grid_env <- get_block(env_layer = base_raster, best_grid = sp_part3$grid)
+
+#' 7. Sample background points
+
+p_data <- sp_part3$part # presence data from spatial block partition example
+
+set.seed(10)
+psa <- lapply(1, function(x) {
+  sample_background(
+    data = p_data,
+    x = "x",
+    y = "y",
+    n = 100,
+    # number of pseudo-absence points to be sampled
+    method = c("thickening", width = 10000),
+    rlayer = grid_env,
+    maskval = x,
+  )
+}) %>%
+  bind_rows() %>%
+  mutate(pr_ab = 0)
+
+par(mfrow = c(2, 1))
+plot(grid_env, main = "Presence points")
+plot(ca_1, add = TRUE)
+points(p_data, cex = .7, pch = 19)
+
 
 #' 2. Fit models - GLM, GBM, SVM with max sens/spec threshold
 # Split predictors into chunks
@@ -60,12 +222,12 @@ for (j in 6:length(predictors)) {
   model_besttss <- mglm[[which.max(tss)]]
   saveRDS(model_besttss, paste0(path, "hostmap/", species, "_mglm_tss_", j, ".RData"))
   beepr::beep(1)
-  tmpFiles(orphan=TRUE,old=TRUE,remove = TRUE)
+  tmpFiles(orphan = TRUE, old = TRUE, remove = TRUE)
   gc()
   rm(mglm)
 }
 
-#Re-do with lc
+# Re-do with lc
 occs_pa$landcoverrc <- as.factor(occs_pa$landcoverrc)
 
 # Chunks of predictors
@@ -96,7 +258,7 @@ for (j in 1:length(predictors)) {
   model_besttss <- mglm[[which.max(tss)]]
   saveRDS(model_besttss, paste0(path, "hostmap/", species, "lc_mglm_tss_", j, ".RData"))
   beepr::beep(1)
-  tmpFiles(orphan=TRUE,old=TRUE,remove = TRUE)
+  tmpFiles(orphan = TRUE, old = TRUE, remove = TRUE)
   gc()
   rm(mglm)
 }
@@ -108,8 +270,8 @@ mraf <- fit_raf(
   predictors2[[1]],
   partition = ".part",
   thr = "max_sens_spec"
-  #metric = "TSS",
-  #grid = tune_grid
+  # metric = "TSS",
+  # grid = tune_grid
 )
 
 mraf$performance$TSS_mean
