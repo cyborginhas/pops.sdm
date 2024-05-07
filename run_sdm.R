@@ -119,6 +119,7 @@ somevar_cont <- rast(somevar_cont)
 somevar_cat <- somevar[grepl("nlcd", somevar)]
 somevar_cat <- rast(somevar_cat)
 names(somevar_cat) <- "nlcd"
+
 # Bias corrections
 somevar_bias <- somevar[grepl("dist2", somevar)]
 somevar_bias <- rast(somevar_bias)
@@ -127,6 +128,7 @@ somevar_bias <- rast(somevar_bias)
 sp_region <- pa
 species <- "Ailanthus_altissima"
 spp1 <- fread(paste0(response_path, "truncated/", species, "_occ_pa.csv"))
+
 # Re-label lon and lat as x and y
 setnames(spp1, c("lon", "lat"), c("x", "y"))
 
@@ -136,6 +138,8 @@ base_raster <- somevar_cat[[1]]
 base_raster <- ifel(base_raster > 0, 1, 0)
 # Turn all na into 0
 base_raster <- ifel(is.na(base_raster), 0, base_raster)
+factors <- c(1, seq(3, 33, by = 3))
+
 
 filt_geo <- occfilt_geo(
   data = spp1,
@@ -147,7 +151,7 @@ filt_geo <- occfilt_geo(
 )
 
 #' 6. Create a spatial-block partition for the data based on continuous predictors
-no_parts <- 4
+no_parts <- 5
 sp_part3 <- part_sblock(
   env_layer = base_raster,
   data = filt_geo,
@@ -157,13 +161,20 @@ sp_part3 <- part_sblock(
   min_res_mult = 10, # Minimum value used for multiplying raster resolution and define the finest resolution to be tested
   max_res_mult = 1000, # Maximum value used for multiplying raster resolution and define the coarsest resolution to be tested
   num_grids = 100, # Number of grid to be tested between min_res_mult X (raster resolution) and max_res_mult X (raster resolution)
-  n_part = no_part, # Number of partitions
+  n_part = no_parts, # Number of partitions
   prop = 0.5, # Proportion of points used for testing autocorrelation between groups (0-1)
-  min_occ = floor(length(filt_geo$fkey)/(no_part*2)) # Minimum number of occurrences to be used in each partition
+  min_occ = floor(length(filt_geo$fkey)/(no_parts*2)) # Minimum number of occurrences to be used in each partition
 )
 plot(sp_part3$grid)
+spp1_pts <- vect(sp_part3$part, crs = crs(base_raster), geom = c("x", "y"))
+# change symbol to a cross and reduce size
+plot(spp1_pts, pch = 3, cex = 0.5, add=TRUE)
 
+s <- Sys.time()
 grid_env <- get_block(env_layer = base_raster, best_grid = sp_part3$grid)
+t <- Sys.time() - s
+print(t)
+
 
 #' 7. Sample background points
 
