@@ -3,6 +3,9 @@ library(flexsdm)
 library(terra)
 library(data.table)
 library(dplyr)
+library(ks)
+library(raster)
+library(spatialEco)
 
 #' 2. Load the data and crop it to the appropriate extent
 og_path <- "Z:/pops_pesthostuse/pops.sdm/Data/"
@@ -113,7 +116,7 @@ response_path <- "D:/blaginh/new_sdm/response/"
 #' 3. Load the cropped predictors and response data
 somevar <- list.files(pred_path_trunc, full.names = TRUE)
 # Continuous predictors
-somevar_cont <- somevar[!grepl("nlcd|BioClimComposite|wc2.1|dist2", somevar)]
+somevar_cont <- somevar[!grepl("nlcd|BioClimComposite|wc2.1|dist2|human_pop_density|theta_r|theta_s|hb_0_5|_n_0_5", somevar)]
 somevar_cont <- rast(somevar_cont)
 # Categorical predictors
 somevar_cat <- somevar[grepl("nlcd", somevar)]
@@ -121,7 +124,7 @@ somevar_cat <- rast(somevar_cat)
 names(somevar_cat) <- "nlcd"
 
 # Bias corrections
-somevar_bias <- somevar[grepl("dist2", somevar)]
+somevar_bias <- somevar[grepl("dist2|human_pop_density", somevar)]
 somevar_bias <- rast(somevar_bias)
 
 # Response data
@@ -138,72 +141,182 @@ base_raster <- somevar_cat[[1]]
 base_raster <- ifel(base_raster > 0, 1, 0)
 # Turn all na into 0
 base_raster <- ifel(is.na(base_raster), 0, base_raster)
-factors <- c(1, seq(3, 33, by = 3))
+factors <- c(1, seq(3, 33, by = 9))
+## # Empty list to store the filtered data
+## filt_geo <- list()
 
+## s <- Sys.time()
+## for (i in seq_along(factors)) {
+##   filt_geo[[i]] <- occfilt_geo(
+##     data = spp1,
+##     x = "x",
+##     y = "y",
+##     env_layer = base_raster,
+##     method = c("cellsize", factor = factors[i]), # coarser resolution than the provided raster
+##     prj = crs(base_raster)
+##   )
+## }
+## t <- Sys.time() - s
+## print(paste0("Time taken to filter geographic data: ", t))
 
-filt_geo <- occfilt_geo(
-  data = spp1,
-  x = "x",
-  y = "y",
-  env_layer = base_raster,
-  method = c("cellsize", factor = "1"), # coarser resolution than the provided raster
-  prj = crs(base_raster)
-)
+## # Write out the filtered data
+## dir.create(paste0(response_path, "truncated/geofilter/"), showWarnings = FALSE, recursive = TRUE)
+
+## for (i in seq_along(factors)) {
+##   write.csv(filt_geo[[i]], paste0(response_path, "truncated/geofilter/", species, "_occ_pa_geofilter_factor", factors[i], ".csv"), row.names = FALSE)
+## }
+
+## # Read in filtered data
+## filt_geo <- list()
+## for (i in factors) {
+##   filt_geo[[i]] <- fread(paste0(response_path, "truncated/", species, "_occ_pa_geofilter_factor", i, ".csv"))
+## }
 
 #' 6. Create a spatial-block partition for the data based on continuous predictors
 no_parts <- 5
-sp_part3 <- part_sblock(
-  env_layer = base_raster,
-  data = filt_geo,
-  x = "x",
-  y = "y",
-  pr_ab = "p_a",
-  min_res_mult = 10, # Minimum value used for multiplying raster resolution and define the finest resolution to be tested
-  max_res_mult = 1000, # Maximum value used for multiplying raster resolution and define the coarsest resolution to be tested
-  num_grids = 100, # Number of grid to be tested between min_res_mult X (raster resolution) and max_res_mult X (raster resolution)
-  n_part = no_parts, # Number of partitions
-  prop = 0.5, # Proportion of points used for testing autocorrelation between groups (0-1)
-  min_occ = floor(length(filt_geo$fkey)/(no_parts*2)) # Minimum number of occurrences to be used in each partition
-)
-plot(sp_part3$grid)
-spp1_pts <- vect(sp_part3$part, crs = crs(base_raster), geom = c("x", "y"))
-# change symbol to a cross and reduce size
-plot(spp1_pts, pch = 3, cex = 0.5, add=TRUE)
+## sp_part3 <- part_sblock(
+##   env_layer = base_raster,
+##   data = filt_geo[[1]],
+##   x = "x",
+##   y = "y",
+##   pr_ab = "p_a",
+##   min_res_mult = 10, # Minimum value used for multiplying raster resolution and define the finest resolution to be tested
+##   max_res_mult = 1000, # Maximum value used for multiplying raster resolution and define the coarsest resolution to be tested
+##   num_grids = 50, # Number of grid to be tested between min_res_mult X (raster resolution) and max_res_mult X (raster resolution)
+##   n_part = no_parts, # Number of partitions
+##   prop = 0.5, # Proportion of points used for testing autocorrelation between groups (0-1)
+##   min_occ = floor(length(filt_geo$fkey)/(no_parts*2)) # Minimum number of occurrences to be used in each partition
+## )
 
-s <- Sys.time()
-grid_env <- get_block(env_layer = base_raster, best_grid = sp_part3$grid)
-t <- Sys.time() - s
-print(t)
+## grid_env <- get_block(env_layer = base_raster, best_grid = sp_part3$grid)
+
+## # Write out the spatial block partition
+blockcv_path <- "D:/blaginh/new_sdm/blockCV/"
+## dir.create(paste0(blockcv_path,"/truncated"), showWarnings = FALSE, recursive = TRUE)
+## writeRaster(grid_env, paste0(blockcv_path, "truncated/", species, "_spatialblock5.tif"), overwrite = TRUE)
+# Read in the spatial block partition
+grid_env <- rast(paste0(blockcv_path, "truncated/", species, "_spatialblock5.tif"))
+
+#' 7. Sample background points (using tidysdm because it is faster than flexsdm)
+## base_raster_part <- list()
+## pts_part <- list()
+## p_a_part <- list()
+
+## for(i in 1:no_parts){
+##   base_raster_part[[i]] <- ifel(grid_env == i, 1, NA)
+##   pts_part[[i]] <- sp_part3$part[sp_part3$part$.part == i, c("x", "y")]
+##   p_a_part[[i]] <- tidysdm::sample_pseudoabs(
+##     data = pts_part[[i]],
+##     raster = base_raster_part[[i]],
+##     method = c('dist_max',10000),
+##     n = length(pts_part[[i]]$x),
+##     return_pres = TRUE
+##   )
+##   p_a_part[[i]]$.part <- i
+## }
+
+## # Combine the background points
+## p_a <- rbindlist(p_a_part)
+## names(p_a) <- c("x", "y", "pr_ab", ".part")
+
+## # If pr_ab == "presence", then pr_ab = 1, else 0
+## p_a$pr_ab <- ifelse(p_a$pr_ab == "presence", 1, 0)
+
+## # Write out full dataset
+## write.csv(p_a, paste0(response_path, "truncated/", species, "_p_a.csv"), row.names = FALSE)
+
+# Read in the full dataset
+response_path <- "D:/blaginh/new_sdm/response/"
+occs_pa <- fread(paste0(response_path, "truncated/", species, "_p_a.csv"))
+
+#' 8. Create target background layer
+#' Read in csv file using fread
+target_group_path <- "D:/blaginh/new_sdm/target_group_lyr/"
+## target_group_dt <-fread(paste0(target_group_path, "tree_observations_uscanada.csv"))
+
+## ext_vals <- round(ext(pa), 3)
 
 
-#' 7. Sample background points
+## # Drop data outside the truncated extent
+## target_group_dt_trunc <- target_group_dt[
+##   target_group_dt$longitude >= ext_vals[1] &
+##     target_group_dt$longitude <= ext_vals[2] &
+##     target_group_dt$latitude >= ext_vals[3] &
+##     target_group_dt$latitude <= ext_vals[4]
+## ]
 
-p_data <- sp_part3$part # presence data from spatial block partition example
-
-set.seed(10)
-psa <- lapply(1, function(x) {
-  sample_background(
-    data = p_data,
-    x = "x",
-    y = "y",
-    n = 100,
-    # number of pseudo-absence points to be sampled
-    method = c("thickening", width = 10000),
-    rlayer = grid_env,
-    maskval = x,
-  )
-}) %>%
-  bind_rows() %>%
-  mutate(pr_ab = 0)
-
-par(mfrow = c(2, 1))
-plot(grid_env, main = "Presence points")
-plot(ca_1, add = TRUE)
-points(p_data, cex = .7, pch = 19)
+## # Write out the target group data
+## dir.create(paste0(target_group_path, "truncated"), showWarnings = FALSE, recursive = TRUE)
+## write.csv(target_group_dt_trunc, paste0(target_group_path, "truncated/", species, "_target_group_trunc.csv"), row.names = FALSE)
 
 
-#' 2. Fit models - GLM, GBM, SVM with max sens/spec threshold
-# Split predictors into chunks
+## # Drop data outside the full extent
+## ext_vals <- round(ext(ext25), 3)
+
+
+## target_group_dt_full <- target_group_dt[
+##   target_group_dt$longitude >= ext_vals[1] &
+##     target_group_dt$longitude <= ext_vals[2] &
+##     target_group_dt$latitude >= ext_vals[3] &
+##     target_group_dt$latitude <= ext_vals[4]
+## ]
+
+## # Write out the target group data
+## dir.create(paste0(target_group_path, "full_extent"), showWarnings = FALSE, recursive = TRUE)
+## write.csv(target_group_dt_full, paste0(target_group_path, "full_extent/", species, "_target_group_full.csv"), row.names = FALSE)
+
+## # Remove dups
+## tgt_grp_dt_trunc_clean <- unique(target_group_dt_trunc[ ,.(genus, species, latitude, longitude)])
+
+## # Aggregate by coodinates
+## sum_records <- tgt_grp_dt_trunc_clean[, .(count = .N), by = .(latitude, longitude)]
+
+## # Create a scale.
+## scale <- length(sum_records[, count]) / sum(sum_records[, count])
+
+## sum_records$scale <- sum_records[,count] * scale
+
+## sum_records <- as.matrix(sum_records)
+
+## # Do a 2d kernel density estimation.
+## target_density <- kde(sum_records[,c(2,1)], w=sum_records[, 4])
+
+
+## # Create raster.
+## target_raster <- raster(target_density, crs=crs(base_raster))
+
+## # Clip data to the same resolution/extent.
+## # If 1, is 1, else 0
+## base_raster_na <- raster(ifel(base_raster > 0, 1, NA))
+## target_raster <- raster::resample(target_raster, raster(base_raster), method='bilinear')
+## target_raster <- mask(target_raster, base_raster_na)
+
+## # Normalize bias file between 0 and 1.
+## target_raster <- target_raster - minValue(target_raster)
+## target_raster <- raster.transformation(rast(target_raster), trans="norm")
+
+## # Create a file pathway and export the raster.
+## writeRaster(target_raster, paste0(target_group_path, "truncated/TargetGroup_biasfile_trunc.tif"),
+##             overwrite = TRUE, gdal = "COMPRESS=ZSTD")
+
+## # Read in the target group bias file
+target_group_bias <- rast(paste0(target_group_path, "truncated/TargetGroup_biasfile_trunc.tif"))
+plot(target_group_bias)
+
+#' 9. Conduct cluster analysis to remove collinearity
+clusters <- cluster_analysis(somevar_cont, 20000, 0.6, somevar_cat)
+combos <- generate_combinations(clusters$var, clusters$cluster)
+predictors <- extract_predictors(combos)
+predictors
+
+#' 10. Fit maxent models across all predictor sets
+
+
+
+#' 11. Pull out the best model based on TSS (independent testing set)
+
+#' 12. Predict the best model
+
 predictors <- split(predictors, ceiling(seq_along(predictors) / 1000))
 
 # Chunks of predictors

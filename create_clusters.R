@@ -3,6 +3,18 @@ library(data.table)
 library(klaR)
 library(terra)
 
+#' @description Perform z-score normalization on a dataset
+#' @param var A numeric vector containing the variable to be normalized
+#' @return A data table containing the normalized variables
+#' @export
+
+z_score_normalization <- function(var) {
+  mean_var <- mean(var, na.rm = TRUE)
+  sd_var <- sd(var, na.rm = TRUE)
+  normalized_var <- (var - mean_var) / sd_var
+  return(normalized_var)
+}
+
 #' @description Perform cluster analysis on a dataset
 #' @param data A SpatRaster object containing the binary/integer/numeric
 #' variables to be used for clustering
@@ -14,18 +26,28 @@ library(terra)
 #' @return A data table containing the variables and their assigned clusters
 
 cluster_analysis <- function(data, sample_size, mincor, categorical_vars) {
-  # Sample data
-  sample <- terra::spatSample(data, size = sample_size, method = "regular",
-                              as.df = TRUE, na.rm = TRUE, values = TRUE,
-                              xy = TRUE)
   # Perform cluster analysis
-  if (!is.null(categorical_vars)) {
-    ccres <- klaR::corclust(sample[, -c(1:2)], categorical_vars)
-  } else {
-    ccres <- klar::corclust(sample[, -c(1:2)])
-  }
+  tryCatch(
+      {
+        sample <- terra::spatSample(data,
+          size = sample_size, method = "regular",
+          as.df = TRUE, na.rm = TRUE, values = TRUE,
+          xy = TRUE
+        )
+        # Z-score normalization: (x - mean(x)) / sd(x)) apply to each column
+        col_names <- names(sample)
+        sample <- as.data.table(lapply(sample, z_score_normalization))
+        names(sample) <- paste0(col_names, "_zscore")
+        # Keep all columns except 1:2 and cat_cols
+        ccres <- klaR::corclust(sample[,-c(1:2)])
+      },
+      error = function(e) {
+        message("An error occurred: ", e$message)
+        message("Please increase the sample_size.")
+      }
+    )
   # Create hierarchical cluster tree based correlation threshold
-  cluster_dt <- klar::cvtree(ccres, mincor = mincor)
+  cluster_dt <- klaR::cvtree(ccres, mincor = mincor)
   vars <- rownames(cluster_dt$correlations)
   cluster_dt <- as.data.table(cluster_dt$correlations)
   cluster_dt$var <- vars
@@ -33,7 +55,7 @@ cluster_analysis <- function(data, sample_size, mincor, categorical_vars) {
   # Reassign clusters
   cluster_dt[, clustercount := .N, by = .(cluster)]
   singles <- cluster_dt[cluster_dt$clustercount == 1 &
-                          cluster_dt$av.cor2closest < mincor]
+    cluster_dt$av.cor2closest < mincor]
   multis <- cluster_dt[cluster_dt$clustercount > 1]
   multisfix <- multis[av.cor2closest > mincor, ]
   multisfix[, cluster := pmin(cluster, closest)]
@@ -41,8 +63,16 @@ cluster_analysis <- function(data, sample_size, mincor, categorical_vars) {
   cluster_dt <- rbind(singles, multis, multisfix)
   cluster_dt <- cluster_dt[, .(var, cluster)]
   cluster_dt <- cluster_dt[order(cluster_dt$cluster, cluster_dt$var)]
+  # Add categorical variables to the cluster assignments
+  if (!is.null(categorical_vars)) {
+    cat_vars <- names(categorical_vars)
+    cat_clusters <- max(cluster_dt$cluster) + 1:length(cat_vars)
+    cat_vars <- data.table(var = cat_vars, cluster = cat_clusters)
+    cluster_dt <- rbind(cluster_dt, cat_vars)
+  }
   return(cluster_dt)
 }
+
 
 #' @description Generate combinations of variables based on clusters
 #' @param vars A character vector containing the variable names
@@ -66,10 +96,12 @@ generate_combinations <- function(vars, clusters) {
     for (cluster_combo in cluster_combos) {
       # Get the variables for the current combination of clusters
       vars_in_combo <-
-        lapply(cluster_combo,
-               function(cluster) {
-                 split_vars[[as.character(cluster)]]
-               })
+        lapply(
+          cluster_combo,
+          function(cluster) {
+            split_vars[[as.character(cluster)]]
+          }
+        )
       if (length(vars_in_combo) > 0) {
         var_combos <- expand.grid(vars_in_combo, stringsAsFactors = FALSE)
         # Create a unique key for the combination
@@ -87,18 +119,8 @@ generate_combinations <- function(vars, clusters) {
 #' @return A list containing vectors of variable names for each combination
 
 extract_predictors <- function(combinations) {
-  predictors_list <- list() # Initialize an empty list to store the vectors
-
-  # Iterate over each element in the combinations list
-  combination_names <- names(combinations)
-  for (name in combination_names) {
-    combination <- combinations[[name]] # Access the combination data frame
-
-    # Iterate over each row in the combination data frame
-    for (i in seq_len(nrow(combination))) {
-      row_as_vector <- as.character(unlist(combination[i, ]))
-      predictors_list[[paste(name, i, sep = "_")]] <- row_as_vector
-    }
-  }
-  return(predictors_list)
+  predictors <- lapply(combinations, function(combo) {
+    combo$Var1
+  })
+  return(predictors)
 }
