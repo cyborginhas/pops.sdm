@@ -1,45 +1,34 @@
 # This script creates the bias files that are used for Ailanthus altissima SDM.
 
 # Load packages.
-library(raster)
-library(dplyr)
-library(ks)
+# library(raster)
+
 library(spatialEco)
 library(data.table)
+library(terra)
+library(spatstat)
 
 # Set working directory.
 setwd("D:/blaginh/new_sdm/")
 
-"D:/blaginh/new_sdm/target_group_lyr/tree_observations_uscanada.csv"
 # Predictors: predictors/truncated/
 # Occurrence data: response/truncated/Ailanthus_altissima_occ_pa.csv
-# Tree data: 
+# Tree data: target_group_lyr/tree_observations_uscanada.csv
 
 # Read in environmental rasters.
-bioclim_filenames <- list.files("predictors/truncated/", full.names = TRUE)
-bio_stack <- stack(lapply(bioclim_filenames, raster))
+bioclim_filenames <- list.files("predictors/truncated/", full.names = TRUE,
+                                pattern = "bioclimatic")
+
+bio_stack <- rast(bioclim_filenames)
 
 # Read in over 1000 occurrence data.
 host <- read.csv("response/truncated/Ailanthus_altissima_occ_pa.csv")
 host_species <- unique(host$sciname)
 
 # Read in all tree occurrence data.
-trees <- read.csv("Data/Hoverfly Data/D_CLEANED_1983_2002.csv")
+trees <- fread("bias_files/target_group_lyr/tree_observations_uscanada.csv")
 
-# Read in virtual occurrences.
-virtual_occurences <- read.csv("response/truncated/")
-virtual_species <- unique(virtual_occurences$random_name)
-
-# Set seed.
-set.seed(12345)
-
-
-
-
-################################################################################
-    ##### Create a uniform bias file for modeling biased/unbiased #####
-
-
+# Create a uniform bias file for modeling biased/unbiased
 # Copy a raster from the stack.
 uniform_biasfile <- bio_stack[[1]]
 
@@ -50,30 +39,62 @@ values(uniform_biasfile) <- 1
 uniform_biasfile <- mask(x = uniform_biasfile, mask = bio_stack[[1]])
 
 # Save the bias file for later use.
-writeRaster(uniform_biasfile, "Data/Bias Files/Uniform_biasfile.tif", overwrite = TRUE)
+dir.create("bias_files/uniform/", recursive = TRUE)
+## writeRaster(uniform_biasfile, "bias_files/uniform/Uniform_biasfile.tif",
+##             overwrite = TRUE, datatype = "INT1U", gdal = "COMPRESS=ZSTD")
 
 
+# Create a bias file for the target group.
+# Retain records within study extent.
+xmin <- ext(bio_stack[[1]])[1]
+xmax <- ext(bio_stack[[1]])[2]
+ymin <- ext(bio_stack[[1]])[3]
+ymax <- ext(bio_stack[[1]])[4]
 
+trees <- trees[trees$longitude >= xmin & trees$longitude <= xmax &
+                 trees$latitude >= ymin & trees$latitude <= ymax, ]
 
-################################################################################
-                 #### Create target group bias file ####
+# Retain "genus", "species", "latitude", and "longitude" columns.
+trees <- unique(trees[, c("genus", "species", "latitude", "longitude")])
 
-
-# Aggregate by coordinates.
-sum_records <- as.data.frame(dplyr::count(all_hoverflies, Easting, Northing))
-
-# Extract coordinates.
-coords <- cbind(sum_records[,1], sum_records[,2])
-
-# Create a scale.
+# Count the number of unique species within each cell.
+sum_records <- trees[, .(n = .N), by = .(longitude, latitude)]
 scale <- length(sum_records[,3]) / sum(sum_records[,3])
-sum_records[,4] <- sum_records[,3] * scale
+sum_records$scaled <- sum_records[,3] * scale
+
+
+# Create sciname column.
+trees$sciname <- paste(trees$genus, trees$species, sep = " ")
+# Aggregate by coordinates & compute scale.
+trees_pts <- vect(trees, geom = c("longitude", "latitude"), crs = "+init=EPSG:4326")
+
+# Define a function that counts the number of unique categories within each cell.
+count_unique <- function(x) {
+  sum(!is.na(unique(x)))
+}
+
+# Rasterize the points file while applying the count_unique function
+rasterized <- rasterize(trees_pts, bio_stack[[1]], field="sciname", fun=count_unique, background = NA)
+
+# Compute the scale.
+scale <- 1 / global(rasterized, sum, na.rm = TRUE)[1]
+
+# Multiply the rasterized file by the scale.
+rasterized <- rasterized * scale$sum
+rasterized_df <- cbind(crds(rasterized, na.rm=TRUE), values(rasterized,na.rm=TRUE))
+rasterized_df <- as.data.table(rasterized_df)
+rasterized_pts <- st_as_sf(rasterized_df, coords = c("x", "y"), crs = 4326)
+target_density <- sf.kde(rasterized_pts, rasterized_pts$sciname, ref = bio_stack[[1]], res = res(bio_stack[[1]])[1])
+
 
 # Do a 2d kernel density estimation.
-target_density <- kde(coords, w=sum_records[,4])
+# Convert sum_records to a sf point object.
+sum_records_pts <- st_as_sf(sum_records, coords = c("longitude", "latitude"), crs = 4326)
+target_density <- sf.kde(sum_records_pts, sum_records_pts$scale, res = 0.0002694946)
+
 
 # Create raster.
-target_raster <- raster(target_density)
+target_raster <- rast(target_density)
 
 # Define in OSGB.
 crs(target_raster) <- '+init=EPSG:27700'
