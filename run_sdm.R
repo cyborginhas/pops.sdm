@@ -1,14 +1,27 @@
-#' 1. Load the required packages
+#' Run the species distribution model: currently runs for Maxent only. Will add in other models later.
+
+#' 1. Load the required packages & set path
+
 library(flexsdm)
 library(terra)
 library(data.table)
-library(dplyr)
-library(ks)
-library(raster)
-library(spatialEco)
+library(parallel)
 
-#' 2. Load the data and crop it to the appropriate extent
-og_path <- "Z:/pops_pesthostuse/pops.sdm/Data/"
+path <- "Z:/pops_pesthostuse/pops.sdm/Data/"
+
+#' 2. Path to the predictor rasters (optional: crop to study extent and store locally to speed up processing)
+#' To do: add logical statement if user wants to store locally or not
+
+sdm_directory(
+  main_dir = NULL,
+  projections = NULL,
+  calibration_area = TRUE,
+  algorithm = NULL,
+  ensemble = NULL,
+  threshold = TRUE,
+  return_vector = TRUE
+)
+
 
 ## rasters <- get_rasters(path, domain = "USA")
 ## files <- unlist(lapply(rasters, function(x) {
@@ -53,46 +66,8 @@ pa <- vect("D:/blaginh/new_sdm/study_extent/pa.gpkg")
 ##   tmpFiles(orphan = TRUE, old = TRUE, remove = TRUE)
 ## }
 
-# Function to get species occurrences
-format_species_name <- function(species) {
-  # Replace " " with "_" in species name
-  species <- gsub(" ", "_", species)
-  # ensure the first letter is in uppercase and the rest are in lowercase
-  species <- tolower(species)
-  # make first letter uppercase
-  species <- paste0(toupper(substr(species, 1, 1)), substr(species, 2, nchar(species)))
-  return(species)
-}
-
-get_species_occurrences <- function(species, path) {
-  files <- list.files(paste0(path, "/Table/"), pattern = species, full.names = TRUE, recursive = TRUE)
-  occs <- lapply(files, function(x) {
-    fread(x, colClasses = "character")
-  })
-  occs <- rbindlist(occs, fill = TRUE)
-  occs[, `:=`(lat = as.numeric(lat), lon = as.numeric(lon), date = as.numeric(date), p_a = as.numeric(p_a))]
-  occs <- occs[date > 1990]
-  #occs <- occs[p_a > 0]
-  return(occs)
-}
-
 species <- "Ailanthus altissima"
 species <- format_species_name(species)
-
-## occs <- get_species_occurrences(species, og_path)
-## # convert to vector with WGS84 CRS using terra vect()
-## occs_pts <- vect(occs, crs = crs(ext25), geom = c("lon", "lat"))
-## # crop to study extent
-## occs_ext25 <- crop(occs_pts, ext25)
-## # convert back to data.table
-## occs_ext25$lon <- crds(occs_ext25)[, 1]
-## occs_ext25$lat <- crds(occs_ext25)[, 2]
-## occs_ext25 <- as.data.table(occs_ext25)
-## # crop to pa extent
-## occs_pa <- crop(occs_pts, pa)
-## occs_pa$lon <- crds(occs_pa)[, 1]
-## occs_pa$lat <- crds(occs_pa)[, 2]
-## occs_pa <- as.data.table(occs_pa)
 
 ## # Export the occurrence data to a csv file
 response_path <- "D:/blaginh/new_sdm/response/"
@@ -137,6 +112,7 @@ setnames(spp1, c("lon", "lat"), c("x", "y"))
 
 #' 4. Preprocess the data: geographic data fitering to offset sampling bias
 base_raster <- somevar_cat[[1]]
+
 # Ifel >0 is 1, else 0
 base_raster <- ifel(base_raster > 0, 1, 0)
 # Turn all na into 0
@@ -198,118 +174,206 @@ blockcv_path <- "D:/blaginh/new_sdm/blockCV/"
 grid_env <- rast(paste0(blockcv_path, "truncated/", species, "_spatialblock5.tif"))
 
 #' 7. Sample background points (using tidysdm because it is faster than flexsdm)
-## base_raster_part <- list()
-## pts_part <- list()
-## p_a_part <- list()
+occs_p <- fread(input = paste0(response_path, "truncated/final/", species, "_p.csv"))
 
-## for(i in 1:no_parts){
-##   base_raster_part[[i]] <- ifel(grid_env == i, 1, NA)
-##   pts_part[[i]] <- sp_part3$part[sp_part3$part$.part == i, c("x", "y")]
-##   p_a_part[[i]] <- tidysdm::sample_pseudoabs(
-##     data = pts_part[[i]],
-##     raster = base_raster_part[[i]],
-##     method = c('dist_max',10000),
-##     n = length(pts_part[[i]]$x),
-##     return_pres = TRUE
-##   )
-##   p_a_part[[i]]$.part <- i
-## }
+#' Random points
+pts_part <- list()
+p_a_part <- list()
+
+for (i in 1:no_parts) {
+  pts_part[[i]] <- occs_p[occs_p$.part == i, c("x", "y")]
+  p_a_part[[i]] <- sample_background(
+    data = pts_part[[i]],
+    x = "x",
+    y = "y",
+    n  = length(pts_part[[i]]$x),
+    method = "random",
+    rlayer = grid_env,
+    maskval = i)
+  p_a_part[[i]]$.part <- i
+}
 
 ## # Combine the background points
-## p_a <- rbindlist(p_a_part)
-## names(p_a) <- c("x", "y", "pr_ab", ".part")
-
-## # If pr_ab == "presence", then pr_ab = 1, else 0
-## p_a$pr_ab <- ifelse(p_a$pr_ab == "presence", 1, 0)
+p_a <- rbindlist(p_a_part)
+p_a <- rbindlist(list(p_a, occs_p))
 
 ## # Write out full dataset
-## write.csv(p_a, paste0(response_path, "truncated/", species, "_p_a.csv"), row.names = FALSE)
+fwrite(p_a, paste0(response_path, "truncated/final/", species, "_p_a_random.csv"),
+                row.names = FALSE)
+
+#' Buffer points
+pts_part <- list()
+p_a_part <- list()
+
+for (i in 1:no_parts) {
+  pts_part[[i]] <- occs_p[occs_p$.part == i, c("x", "y")]
+  p_a_part[[i]] <- sample_background(
+    data = pts_part[[i]],
+    x = "x",
+    y = "y",
+    n  = length(pts_part[[i]]$x),
+    method = c("thickening", width = 10000),
+    rlayer = grid_env,
+    maskval = i)
+  p_a_part[[i]]$.part <- i
+}
+
+## # Combine the background points
+p_a <- rbindlist(p_a_part)
+p_a <- rbindlist(list(p_a, occs_p))
+
+## # Write out full dataset
+fwrite(p_a, paste0(response_path, "truncated/final/", species, "_p_a_thickening.csv"),
+                row.names = FALSE)
+
+## # Biased: Population density
+bias <- rast(bias_files[3])
+base_raster_part <- list()
+bias_raster_part <- list()
+pts_part <- list()
+p_a_part <- list()
+
+for (i in 1:no_parts) {
+  base_raster_part[[i]] <- ifel(grid_env == i, 1, NA)
+  bias_raster_part[[i]] <- ifel(grid_env == i, bias, NA)
+  pts_part[[i]] <- occs_p[occs_p$.part == i, c("x", "y")]
+  p_a_part[[i]] <- sample_background(
+    data = pts_part[[i]],
+    x = "x",
+    y = "y",
+    n  = length(pts_part[[i]]$x),
+    method = "biased",
+    rlayer = base_raster_part[[i]],
+    rbias = bias_raster_part[[i]],
+    maskval = 1)
+  p_a_part[[i]]$.part <- i
+}
+
+## # Combine the background points
+p_a <- rbindlist(p_a_part)
+p_a <- rbindlist(list(p_a, occs_p))
+
+## # Write out full dataset
+fwrite(p_a, paste0(response_path, "truncated/final/", species, "_p_a_thickening.csv"),
+                row.names = FALSE)
+
+
+## # Biased: Target Group Density
+bias <- rast(bias_files[grep("target", bias_files)])
+base_raster_part <- list()
+bias_raster_part <- list()
+pts_part <- list()
+p_a_part <- list()
+
+for (i in 1:no_parts) {
+  base_raster_part[[i]] <- ifel(grid_env == i, 1, NA)
+  bias_raster_part[[i]] <- ifel(grid_env == i, bias, NA)
+  pts_part[[i]] <- occs_p[occs_p$.part == i, c("x", "y")]
+  p_a_part[[i]] <- sample_background(
+    data = pts_part[[i]],
+    x = "x",
+    y = "y",
+    n  = length(pts_part[[i]]$x),
+    method = "biased",
+    rlayer = base_raster_part[[i]],
+    rbias = bias_raster_part[[i]],
+    maskval = 1)
+  p_a_part[[i]]$.part <- i
+}
+
+## # Combine the background points
+p_a <- rbindlist(p_a_part)
+p_a <- rbindlist(list(p_a, occs_p))
+
+## # Write out full dataset
+fwrite(p_a, paste0(response_path, "truncated/final/", species, "_p_a_target_group.csv"),
+                row.names = FALSE)
+
+
+## # Biased: Roads
+bias <- rast(bias_files[grep("roads", bias_files)])
+base_raster_part <- list()
+bias_raster_part <- list()
+pts_part <- list()
+p_a_part <- list()
+
+for (i in 1:no_parts) {
+  base_raster_part[[i]] <- ifel(grid_env == i, 1, NA)
+  bias_raster_part[[i]] <- ifel(grid_env == i, bias, NA)
+  pts_part[[i]] <- occs_p[occs_p$.part == i, c("x", "y")]
+  p_a_part[[i]] <- sample_background(
+    data = pts_part[[i]],
+    x = "x",
+    y = "y",
+    n  = length(pts_part[[i]]$x),
+    method = "biased",
+    rlayer = base_raster_part[[i]],
+    rbias = bias_raster_part[[i]],
+    maskval = 1)
+  p_a_part[[i]]$.part <- i
+}
+
+## # Combine the background points
+p_a <- rbindlist(p_a_part)
+p_a <- rbindlist(list(p_a, occs_p))
+
+## # Write out full dataset
+fwrite(p_a, paste0(response_path, "truncated/final/", species, "_p_a_roads.csv"),
+                row.names = FALSE)
+
+## # Biased: Rails
+bias <- rast(bias_files[grep("rails", bias_files)])
+base_raster_part <- list()
+bias_raster_part <- list()
+pts_part <- list()
+p_a_part <- list()
+
+for (i in 1:no_parts) {
+  base_raster_part[[i]] <- ifel(grid_env == i, 1, NA)
+  bias_raster_part[[i]] <- ifel(grid_env == i, bias, NA)
+  pts_part[[i]] <- occs_p[occs_p$.part == i, c("x", "y")]
+  p_a_part[[i]] <- sample_background(
+    data = pts_part[[i]],
+    x = "x",
+    y = "y",
+    n  = length(pts_part[[i]]$x),
+    method = "biased",
+    rlayer = base_raster_part[[i]],
+    rbias = bias_raster_part[[i]],
+    maskval = 1)
+  p_a_part[[i]]$.part <- i
+}
+
+## # Combine the background points
+p_a <- rbindlist(p_a_part)
+p_a <- rbindlist(list(p_a, occs_p))
+
+## # Write out full dataset
+fwrite(p_a, paste0(response_path, "truncated/final/", species, "_p_a_rails.csv"),
+                row.names = FALSE)
 
 # Read in the full dataset
-response_path <- "D:/blaginh/new_sdm/response/"
-occs_pa <- fread(paste0(response_path, "truncated/", species, "_p_a.csv"))
 
-#' 8. Create target background layer
-#' Read in csv file using fread
-target_group_path <- "D:/blaginh/new_sdm/target_group_lyr/"
-## target_group_dt <-fread(paste0(target_group_path, "tree_observations_uscanada.csv"))
-
-## ext_vals <- round(ext(pa), 3)
-
-
-## # Drop data outside the truncated extent
-## target_group_dt_trunc <- target_group_dt[
-##   target_group_dt$longitude >= ext_vals[1] &
-##     target_group_dt$longitude <= ext_vals[2] &
-##     target_group_dt$latitude >= ext_vals[3] &
-##     target_group_dt$latitude <= ext_vals[4]
-## ]
-
-## # Write out the target group data
-## dir.create(paste0(target_group_path, "truncated"), showWarnings = FALSE, recursive = TRUE)
-## write.csv(target_group_dt_trunc, paste0(target_group_path, "truncated/", species, "_target_group_trunc.csv"), row.names = FALSE)
-
-
-## # Drop data outside the full extent
-## ext_vals <- round(ext(ext25), 3)
-
-
-## target_group_dt_full <- target_group_dt[
-##   target_group_dt$longitude >= ext_vals[1] &
-##     target_group_dt$longitude <= ext_vals[2] &
-##     target_group_dt$latitude >= ext_vals[3] &
-##     target_group_dt$latitude <= ext_vals[4]
-## ]
-
-## # Write out the target group data
-## dir.create(paste0(target_group_path, "full_extent"), showWarnings = FALSE, recursive = TRUE)
-## write.csv(target_group_dt_full, paste0(target_group_path, "full_extent/", species, "_target_group_full.csv"), row.names = FALSE)
-
-## # Remove dups
-## tgt_grp_dt_trunc_clean <- unique(target_group_dt_trunc[ ,.(genus, species, latitude, longitude)])
-
-## # Aggregate by coodinates
-## sum_records <- tgt_grp_dt_trunc_clean[, .(count = .N), by = .(latitude, longitude)]
-
-## # Create a scale.
-## scale <- length(sum_records[, count]) / sum(sum_records[, count])
-
-## sum_records$scale <- sum_records[,count] * scale
-
-## sum_records <- as.matrix(sum_records)
-
-## # Do a 2d kernel density estimation.
-## target_density <- kde(sum_records[,c(2,1)], w=sum_records[, 4])
-
-
-## # Create raster.
-## target_raster <- raster(target_density, crs=crs(base_raster))
-
-## # Clip data to the same resolution/extent.
-## # If 1, is 1, else 0
-## base_raster_na <- raster(ifel(base_raster > 0, 1, NA))
-## target_raster <- raster::resample(target_raster, raster(base_raster), method='bilinear')
-## target_raster <- mask(target_raster, base_raster_na)
-
-## # Normalize bias file between 0 and 1.
-## target_raster <- target_raster - minValue(target_raster)
-## target_raster <- raster.transformation(rast(target_raster), trans="norm")
-
-## # Create a file pathway and export the raster.
-## writeRaster(target_raster, paste0(target_group_path, "truncated/TargetGroup_biasfile_trunc.tif"),
-##             overwrite = TRUE, gdal = "COMPRESS=ZSTD")
-
-## # Read in the target group bias file
-target_group_bias <- rast(paste0(target_group_path, "truncated/TargetGroup_biasfile_trunc.tif"))
-plot(target_group_bias)
+#' Read in the bias files
+bias_path <- "D:/blaginh/new_sdm/bias_files/"
+bias_files <- list.files(bias_path, full.names = TRUE, pattern = "tif", recursive = TRUE)
+# Remove "raw"
+bias_files <- bias_files[!grepl("raw", bias_files)]
 
 #' 9. Conduct cluster analysis to remove collinearity
+source("create_clusters.R")
 clusters <- cluster_analysis(somevar_cont, 20000, 0.6, somevar_cat)
 combos <- generate_combinations(clusters$var, clusters$cluster)
 predictors <- extract_predictors(combos)
-predictors
+length(predictors)
 
 #' 10. Fit maxent models across all predictor sets
+ncores <- (detectCores()/2) - 1
+makeCluster(ncores)
+model_name <- paste0("uniform_", species, "_")
+random_pts <-fread(paste0(response_path, "truncated/final/", species, "_p_a_random.csv")
+)
+
 
 
 
