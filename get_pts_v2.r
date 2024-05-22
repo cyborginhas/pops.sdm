@@ -16,6 +16,23 @@ progress <- function(message) {
   print(paste0(message))
 }
 
+#' @description  Function to find "start_date", "end_date", and "date_retrieved"
+#' columns in a data.table and convert them to Date format.
+#' @param data The data.table to be processed.
+
+convert_dates <- function(data) {
+  if ("start_date" %in% colnames(data)) {
+    data[, start_date := as.IDate(start_date, format = "%Y-%m-%d")]
+  }
+  if ("end_date" %in% colnames(data)) {
+    data[, end_date := as.IDate(end_date, format = "%Y-%m-%m")]
+  }
+  if ("dateretrieved" %in% colnames(data)) {
+    data[, dateretrieved := as.IDate(dateretrieved, format = "%Y-%m-%d")]
+  }
+  return(data)
+}
+
 #' @description Function to get the gbif taxon key for a given taxon name
 #' and taxon rank
 #' @param scientific_name character string of taxon name
@@ -54,7 +71,6 @@ get_gbif_keys <- function(scientific_name, taxon_rank) {
   }
   return(species)
 }
-
 
 #' @description Function to add date range to taxon key for each species based
 #' on the existing metadata file.
@@ -129,13 +145,13 @@ get_dates <- function(date_range, db) {
   if (start_date == "1600-01-01") {
     dates <- c(start_date, as.Date("1960-12-31"))
     dates <- c(dates, seq((dates)[length(dates)], as.Date(Sys.Date()),
-                 by = "1 year"
-               )[-1])
+      by = "1 year"
+    )[-1])
     dates <- c(dates, Sys.Date())
   } else if (start_date == "2008-01-01") {
     dates <- list(years = seq(as.Date("2008-01-01"), as.Date("2018-01-01"),
-                    by = "year"
-                  ), months = NULL, days = NULL)
+      by = "year"
+    ), months = NULL, days = NULL)
     dates[[2]] <- seq(dates[[1]][length(dates[[1]])], Sys.Date(), by = "month")
     dates[[3]] <- seq(dates[[2]][length(dates[[2]])], Sys.Date(), by = "day")
     dates[[2]] <- dates[[2]][-length(dates[[2]])]
@@ -200,6 +216,10 @@ append_dirs <- function(occs, taxon_key, path) {
 #' @import data.table
 #' @return a data.table of the taxon key with the number of records added
 #' @export get_inat_counts
+#' 
+
+taxon_key <- get_gbif_keys(scientific_name, taxon_rank)
+taxon_key <- batch_upd_dates(taxon_key, path)
 
 get_gbif_pts <- function(taxon_key, path) {
   # Retain gbif metadata
@@ -272,8 +292,8 @@ get_gbif_pts <- function(taxon_key, path) {
     # Remove any inat records added to gbif after the inat release date
     inat_time <- lubridate::ymd("2008-01-01")
     occs <- list(occs[occs$eventDate2 < inat_time |
-                        (occs$publishingOrgKey != inat &
-                           occs$eventDate2 > inat_time), ])
+      (occs$publishingOrgKey != inat &
+        occs$eventDate2 > inat_time), ])
 
     # Split date_range into start_date and end_date
     start_date <- as.Date(strsplit(date_range, ",")[[1]][1])
@@ -322,8 +342,10 @@ get_gbif_pts <- function(taxon_key, path) {
   occs <- append_dirs(occs, taxon_key, path)
   if (nrow(occs[[2]]) == 0) {
     # Read in existing cleaned data
-    occs[[3]] <- data.table::fread(paste0(path, names(occs)[3]), colClasses =
-                                     "character")
+    occs[[3]] <- data.table::fread(paste0(path, names(occs)[3]),
+      colClasses =
+        "character"
+    )
   }
   return(occs)
 }
@@ -456,7 +478,7 @@ get_inat_pts <- function(taxon_key, path) {
       )])
       # Clean occs data for sdm
       occs[[1]] <- unique(occs[[1]][coordinates_obscured != "true" &
-                                      taxon_geoprivacy != "obscured"])
+        taxon_geoprivacy != "obscured"])
       occs[[3]] <- unique(occs[[1]][, .(
         fkey = id, date = observed_on,
         p_a = 1, lat = latitude, lon = longitude, db = "inat", sciname =
@@ -479,8 +501,10 @@ get_inat_pts <- function(taxon_key, path) {
   occs <- append_dirs(occs, taxon_key, path)
   if (nrow(occs[[2]]) == 0) {
     # Read in existing cleaned data
-    occs[[3]] <- data.table::fread(paste0(path, names(occs)[3]), colClasses =
-                                     "character")
+    occs[[3]] <- data.table::fread(paste0(path, names(occs)[3]),
+      colClasses =
+        "character"
+    )
   }
   return(occs)
 }
@@ -562,8 +586,10 @@ get_bien_pts <- function(taxon_key, path) {
   occs <- append_dirs(occs, taxon_key, path)
   if (nrow(occs[[2]]) == 0) {
     # Read in existing cleaned data
-    occs[[3]] <- data.table::fread(paste0(path, names(occs)[3]), colClasses =
-                                     "character")
+    occs[[3]] <- data.table::fread(paste0(path, names(occs)[3]),
+      colClasses =
+        "character"
+    )
   }
   return(occs)
 }
@@ -758,8 +784,10 @@ get_neon_pts <- function(taxon_key, path) {
   occs <- append_dirs(occs, taxon_key, path)
   if (nrow(occs[[2]]) == 0) {
     # Read in existing cleaned data
-    occs[[3]] <- data.table::fread(paste0(path, names(occs)[3]), colClasses =
-                                     "character")
+    occs[[3]] <- data.table::fread(paste0(path, names(occs)[3]),
+      colClasses =
+        "character"
+    )
   }
   return(occs)
 }
@@ -805,7 +833,11 @@ export_data <- function(occs, path) {
     if (file.exists(paste0(path, names(occs)[2]))) {
       d <- data.table::fread(paste0(path, names(occs)[2]))
       d0 <- d[speciesKey == occs[[2]]$speciesKey[1] & database ==
-                occs[[2]]$database[1], ]
+        occs[[2]]$database[1], ]
+      # Convert start_date and end_date to Date format in occs[[2]]
+      occs[[2]] <- convert_dates(occs[[2]])
+      # Convert start_date and end_date to Date format in d0
+      d0 <- convert_dates(d0)
       d0 <- data.table::rbindlist(list(d0, occs[[2]]), fill = TRUE)
       d0 <- d0[, .(
         total = sum(as.numeric(total)), present = sum(as.numeric(present)),
@@ -819,8 +851,11 @@ export_data <- function(occs, path) {
         )
       )]
       d <- d[speciesKey != occs[[2]]$speciesKey[1] |
-               database != occs[[2]]$database[1], ]
+        database != occs[[2]]$database[1], ]
+      d <- convert_dates(d)
       d <- data.table::rbindlist(list(d, d0), fill = TRUE)
+      # Use data.table to convert all columns to character
+      d <- d[, names(d) := lapply(.SD, as.character)]
       data.table::fwrite(d, paste0(path, names(occs)[2]),
         row.names = FALSE
       )
