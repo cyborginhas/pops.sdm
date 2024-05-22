@@ -8,66 +8,64 @@ library(data.table)
 library(parallel)
 
 path <- "Z:/pops_pesthostuse/pops.sdm/Data/"
+setwd("D:/blaginh/sdm_truncated_extent/")
+domain <- "USA"
+extent <- "D:/blaginh/sdm_truncated_extent/flexsdm_results/1_Inputs/3_Calibration_area/studyext.gpkg"
+res <- 30
 
-#' 2. Path to the predictor rasters (optional: crop to study extent and store locally to speed up processing)
-#' To do: add logical statement if user wants to store locally or not
-
-sdm_directory(
-  main_dir = NULL,
-  projections = NULL,
-  calibration_area = TRUE,
-  algorithm = NULL,
-  ensemble = NULL,
-  threshold = TRUE,
-  return_vector = TRUE
+#' 2. Set up SDM directories
+flexsdm::sdm_directory(
+  algorithm = TRUE
 )
 
+#' 3. Create base raster for the study extent
+source("C:/Users/blaginh/Documents/GitHub/pops.sdm/pops.sdm/sdm_helpers.R")
+source("C:/Users/blaginh/Documents/Github/pops.sdm/pops.sdm/get_envi_chunked.R") # get_topo_global # nolint
+source("C:/Users/blaginh/Documents/Github/pops.sdm/pops.sdm/raster_base.R") # base_raster at correct resolution and extent # nolint
 
-## rasters <- get_rasters(path, domain = "USA")
-## files <- unlist(lapply(rasters, function(x) {
-##   get_filename(x, "USA", path)
-## }))
+res <- fix_resolution(res, domain)
+base <- cropped_base_raster(domain, res, path, extent)
 
-## # Pull out all the rasters that are 30m
-## files_30m <- files[grep("30m", files)]
-## files_30m <- files_30m[-1]
+#' Write out the base raster
+cropped_base_path <- paste0(getwd(), "/flexsdm_results/1_Inputs/3_Calibration_area/base_study_extent.tif") # nolint
+writeRaster(base, cropped_base_path, overwrite = TRUE,
+            gdal = "COMPRESS=ZSTD", datatype = "INT1U")
+
+#' 3. Copy predictors and response data to the appropriate directories
+predictors <- subset_rasters(path, domain = domain, all = FALSE, pop = FALSE, roads = FALSE, rails = FALSE, gdd = FALSE)
+
+files <- as.vector(unlist(lapply(predictors, function(x) {
+  get_filename(x, "USA", path)
+})))
+
+#' Retain only the rasters at the correct resolution
+subset_files <- files[grep(paste0(res, "m"), files)]
 
 # Create a directory for predictors
-pred_path <- "D:/blaginh/new_sdm/predictors/"
-pred_path_fullextent <- "D:/blaginh/new_sdm/predictors/full_extent/"
-pred_path_trunc <- "D:/blaginh/new_sdm/predictors/truncated/"
-studyext_path <- "D:/blaginh/new_sdm/study_extent/"
+pred_copies_path <- paste0(getwd(), "/flexsdm_results/1_Inputs/2_Predictors/1_Current/copies/") # nolint
+pred_cropped_path <- paste0(getwd(), "/flexsdm_results/1_Inputs/2_Predictors/1_Current/cropped/") # nolint
+dir.create(pred_copies_path, showWarnings = TRUE, recursive = TRUE)
+dir.create(pred_cropped_path, showWarnings = TRUE, recursive = TRUE)
 
-## dir.create(pred_path_fullextent, showWarnings = FALSE, recursive = TRUE)
-## dir.create(pred_path_trunc, showWarnings = FALSE, recursive = TRUE)
-## dir.create(studyext_path, showWarnings = FALSE, recursive = TRUE)
+# Copy and crop the predictors
+## cropped_predictors <- list()
 
-# Copy the study extent to the study extent directory
-ext25 <- vect("D:/blaginh/new_sdm/study_extent/ext25.gpkg")
-pa <- vect("D:/blaginh/new_sdm/study_extent/pa.gpkg")
-
-# Copy the 30m rasters to the predictors directory; test on one raster
-## for (file in files_30m) {
-##   s <- Sys.time()
-##   # Copy the file to the predictors directory
-##   file.copy(file, pred_path)
-##   copy <- paste0(pred_path, basename(file))
-##   r <- terra::rast(copy)
-##   # Replace the path with the new path
-##   new_filename <- paste0(pred_path_fullextent, basename(copy))
-##   # Replace reproj_30m.tif with 30m_ext25.tif
-##   new_filename <- gsub("reproj_30m.tif", "30m_ext25.tif", new_filename)
-##   dtype <- terra::datatype(r)
-##   # Crop the raster to the study extent
-##   r2 <- terra::crop(r, ext25)
-##   writeRaster(r2, new_filename, overwrite = TRUE, datatype = dtype, gdal = "COMPRESS=ZSTD")
-##   t <- Sys.time() - s
-##   print(paste0("Time taken to crop ", basename(new_filename), ": ", t))
-##   tmpFiles(orphan = TRUE, old = TRUE, remove = TRUE)
+## for (i in seq_along(subset_files)) {
+##   cropped_predictors[[i]] <- crop_predictor(
+##     file = subset_files[i],
+##     pred_copies_path = pred_copies_path,
+##     pred_cropped_path = pred_cropped_path,
+##     extent = base
+##   )
 ## }
+
+#' 4. Load the species occurrence data
 
 species <- "Ailanthus altissima"
 species <- format_species_name(species)
+source("C:/Users/blaginh/Documents/Github/pops.sdm/pops.sdm/get_pts_v2.r")
+occs_pa <- batch_get_pts(species, "species", path, conus = TRUE)
+
 
 ## # Export the occurrence data to a csv file
 response_path <- "D:/blaginh/new_sdm/response/"
