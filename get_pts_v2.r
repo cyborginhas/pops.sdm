@@ -22,13 +22,13 @@ progress <- function(message) {
 
 convert_dates <- function(data) {
   if ("start_date" %in% colnames(data)) {
-    data[, start_date := as.IDate(start_date, format = "%Y-%m-%d")]
+    data[, start_date := as.Date(start_date, format = "%Y-%m-%d")]
   }
   if ("end_date" %in% colnames(data)) {
-    data[, end_date := as.IDate(end_date, format = "%Y-%m-%m")]
+    data[, end_date := as.Date(end_date, format = "%Y-%m-%m")]
   }
   if ("dateretrieved" %in% colnames(data)) {
-    data[, dateretrieved := as.IDate(dateretrieved, format = "%Y-%m-%d")]
+    data[, dateretrieved := as.Date(dateretrieved, format = "%Y-%m-%d")]
   }
   return(data)
 }
