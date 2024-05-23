@@ -216,10 +216,6 @@ append_dirs <- function(occs, taxon_key, path) {
 #' @import data.table
 #' @return a data.table of the taxon key with the number of records added
 #' @export get_inat_counts
-#' 
-
-taxon_key <- get_gbif_keys(scientific_name, taxon_rank)
-taxon_key <- batch_upd_dates(taxon_key, path)
 
 get_gbif_pts <- function(taxon_key, path) {
   # Retain gbif metadata

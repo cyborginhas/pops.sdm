@@ -47,28 +47,6 @@ format_species_name <- function(species) {
   return(species)
 }
 
-#' @description This function uses the species name provided by format_species_name
-#' and the path to the species occurrence data to read in the species occurrence
-#' data. The function reads in the species occurrence data and returns a data
-#' table with the species occurrence data.
-#' @param species The species name returned by format_species_name.
-#' @param path The path to the species occurrence data.
-
-
-get_species_occurrences <- function(species, path) {
-  species <- format_species_name(species)
-  files <- list.files(paste0(path, "/Table/"), pattern = species, full.names = TRUE, recursive = TRUE)
-  occs <- lapply(files, function(x) {
-    fread(x, colClasses = "character")
-  })
-  occs <- rbindlist(occs, fill = TRUE)
-  occs[, `:=`(lat = as.numeric(lat), lon = as.numeric(lon), date = as.numeric(date), p_a = as.numeric(p_a))]
-  occs <- occs[date > 1990]
-  # occs <- occs[p_a > 0]
-  return(occs)
-}
-
-
 #' @description This function reads in predictors and crops them to the domain
 #' of interest. The function returns a list of cropped predictors.
 #' @param file The predictor file to be cropped.
@@ -127,12 +105,45 @@ crop_predictor <- function(
 #' @export crop_species_occurrences
 
 crop_species_occurrences <- function(occs, extent) {
-  occs_pts <- vect(occs, crs = crs(extent), geom = c("lon", "lat"))
-  extent <- vect(extent)
-  extent <- project(extent, crs(occs_pts))
-  occs_extent <- crop(occs_pts, extent)
-  occs_extent$lon <- crds(occs_extent)[, 1]
-  occs_extent$lat <- crds(occs_extent)[, 2]
-  occs_extent <- as.data.table(occs_extent)
+  occs_pts <- terra::vect(occs, crs = terra::crs(extent),
+                          geom = c("lon", "lat"))
+  extent <- terra::vect(extent)
+  extent <- terra::project(extent, terra::crs(occs_pts))
+  occs_extent <- terra::crop(occs_pts, extent)
+  occs_extent$lon <- terra::crds(occs_extent)[, 1]
+  occs_extent$lat <- terra::crds(occs_extent)[, 2]
+  occs_extent <- data.table::as.data.table(occs_extent)
   return(occs_extent)
+}
+
+#' @description Function to retrieve base raster for domain and resolution
+#' and extent of interest.
+#' @param domain The domain of interest. Options are "USA" or "Global".
+#' @param res The resolution of the base raster to create.
+#' @param path Path for the Data folder
+#' @param extent Path to vector file of extent of interest to crop the base raster.
+#' The cropped based raster will be saved locally in specified output path.
+#' @note Will add option to specify resolutions beyond 30m, 100m, 250m, 500m, 1000m
+#'in future versions.
+
+cropped_base_raster <- function(domain, res, path, extent) {
+  # Retrieve base raster
+  if (domain == "USA") {
+    common_res_names <- c(30, 100, 250, 500, 1000)
+    base <- base_conus(path)
+    # Pull the base raster at the specified resolution
+    base <- base[[which(common_res_names == res)]]
+  } else if (domain == "Global") {
+    common_res_names <- c(1000, 2500, 5000)
+    base <- base_global(path)
+    # Pull the base raster at the specified resolution
+    base <- base[[which(common_res_names == res)]]
+  } else {
+    stop("Domain must be 'USA' or 'Global'")
+  }
+  # Crop the base raster to the extent of interest
+  extent <- terra::vect(extent)
+  extent <- terra::project(extent, y = terra::crs(base))
+  base <- terra::crop(base, extent)
+  return(base)
 }
