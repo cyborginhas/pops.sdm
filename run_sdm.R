@@ -18,6 +18,7 @@ flexsdm::sdm_directory(
   algorithm = TRUE
 )
 
+
 #' 3. Create base raster for the study extent
 source("C:/Users/blaginh/Documents/GitHub/pops.sdm/pops.sdm/sdm_helpers.R")
 source("C:/Users/blaginh/Documents/Github/pops.sdm/pops.sdm/get_envi_chunked.R") # get_topo_global # nolint
@@ -32,20 +33,20 @@ writeRaster(base, cropped_base_path, overwrite = TRUE,
             gdal = "COMPRESS=ZSTD", datatype = "INT1U")
 
 #' 3. Copy predictors and response data to the appropriate directories
-predictors <- subset_rasters(path, domain = domain, all = FALSE, pop = FALSE, roads = FALSE, rails = FALSE, gdd = FALSE)
+## predictors <- subset_rasters(path, domain = domain, all = FALSE, pop = FALSE, roads = FALSE, rails = FALSE, gdd = FALSE)
 
-files <- as.vector(unlist(lapply(predictors, function(x) {
-  get_filename(x, "USA", path)
-})))
+## files <- as.vector(unlist(lapply(predictors, function(x) {
+##   get_filename(x, "USA", path)
+## })))
 
 #' Retain only the rasters at the correct resolution
-subset_files <- files[grep(paste0(res, "m"), files)]
+## subset_files <- files[grep(paste0(res, "m"), files)]
 
 # Create a directory for predictors
-pred_copies_path <- paste0(getwd(), "/flexsdm_results/1_Inputs/2_Predictors/1_Current/copies/") # nolint
+## pred_copies_path <- paste0(getwd(), "/flexsdm_results/1_Inputs/2_Predictors/1_Current/copies/") # nolint
 pred_cropped_path <- paste0(getwd(), "/flexsdm_results/1_Inputs/2_Predictors/1_Current/cropped/") # nolint
-dir.create(pred_copies_path, showWarnings = TRUE, recursive = TRUE)
-dir.create(pred_cropped_path, showWarnings = TRUE, recursive = TRUE)
+## dir.create(pred_copies_path, showWarnings = TRUE, recursive = TRUE)
+## dir.create(pred_cropped_path, showWarnings = TRUE, recursive = TRUE)
 
 # Copy and crop the predictors
 ## cropped_predictors <- list()
@@ -59,108 +60,79 @@ dir.create(pred_cropped_path, showWarnings = TRUE, recursive = TRUE)
 ##   )
 ## }
 
-#' 4. Load the species occurrence data
+cropped_predictors <- list.files(pred_cropped_path, full.names = TRUE, pattern = "tif", recursive = TRUE)
+cropped_predictors <- terra::rast(cropped_predictors)
 
+#' 4. Load the species occurrence data
 species <- "Ailanthus altissima"
 species <- format_species_name(species)
 source("C:/Users/blaginh/Documents/Github/pops.sdm/pops.sdm/get_pts_v2.r")
 occs_pa <- batch_get_pts(species, "species", path, conus = TRUE)
+occs_pa <- prep_occurrences(occs_pa, base, year = 1990)
+occs_pa <- export_occurrences(occs_pa)
+
+#' 5. Geographic filtering of occurrence data to address spatial autocorrelation
+cellsizes <- get_geo_cellsizes(domain = "USA", res = 30)
+filt_geo <- list()
+for (i in seq_along(cellsizes)) {
+  filt_geo[[i]] <- geo_filter_occs(occs_pa, base, cellsizes[i],
+                                   species)
+}
 
 
-## # Export the occurrence data to a csv file
-response_path <- "D:/blaginh/new_sdm/response/"
-## dir.create(paste0(response_path, "full_extent/"),
-##   showWarnings = FALSE,
-##   recursive = TRUE
-## )
-## dir.create(paste0(response_path, "truncated/"),
-##   showWarnings = FALSE,
-##   recursive = TRUE
-## )
-## # write to file
-## write.csv(occs_ext25, paste0(
-##   response_path, "full_extent/", species,
-##   "_occ_ext25.csv"
-## ), row.names = FALSE)
-## write.csv(occs_pa, paste0(response_path, "truncated/", species, "_occ_pa.csv"),
-##   row.names = FALSE
-## )
-
-#' 3. Load the cropped predictors and response data
-somevar <- list.files(pred_path_trunc, full.names = TRUE)
-# Continuous predictors
-somevar_cont <- somevar[!grepl("nlcd|BioClimComposite|wc2.1|dist2|human_pop_density|theta_r|theta_s|hb_0_5|_n_0_5", somevar)]
-somevar_cont <- rast(somevar_cont)
-# Categorical predictors
-somevar_cat <- somevar[grepl("nlcd", somevar)]
-somevar_cat <- rast(somevar_cat)
-names(somevar_cat) <- "nlcd"
-
-# Bias corrections
-somevar_bias <- somevar[grepl("dist2|human_pop_density", somevar)]
-somevar_bias <- rast(somevar_bias)
-
-# Response data
-sp_region <- pa
-species <- "Ailanthus_altissima"
-spp1 <- fread(paste0(response_path, "truncated/", species, "_occ_pa.csv"))
-
-# Re-label lon and lat as x and y
-setnames(spp1, c("lon", "lat"), c("x", "y"))
-
-#' 4. Preprocess the data: geographic data fitering to offset sampling bias
-base_raster <- somevar_cat[[1]]
-
-# Ifel >0 is 1, else 0
-base_raster <- ifel(base_raster > 0, 1, 0)
-# Turn all na into 0
-base_raster <- ifel(is.na(base_raster), 0, base_raster)
-factors <- c(1, seq(3, 33, by = 9))
-## # Empty list to store the filtered data
-## filt_geo <- list()
-
-## s <- Sys.time()
-## for (i in seq_along(factors)) {
-##   filt_geo[[i]] <- occfilt_geo(
-##     data = spp1,
-##     x = "x",
-##     y = "y",
-##     env_layer = base_raster,
-##     method = c("cellsize", factor = factors[i]), # coarser resolution than the provided raster
-##     prj = crs(base_raster)
-##   )
-## }
-## t <- Sys.time() - s
-## print(paste0("Time taken to filter geographic data: ", t))
-
-## # Write out the filtered data
-## dir.create(paste0(response_path, "truncated/geofilter/"), showWarnings = FALSE, recursive = TRUE)
-
-## for (i in seq_along(factors)) {
-##   write.csv(filt_geo[[i]], paste0(response_path, "truncated/geofilter/", species, "_occ_pa_geofilter_factor", factors[i], ".csv"), row.names = FALSE)
-## }
-
-## # Read in filtered data
-## filt_geo <- list()
-## for (i in factors) {
-##   filt_geo[[i]] <- fread(paste0(response_path, "truncated/", species, "_occ_pa_geofilter_factor", i, ".csv"))
-## }
 
 #' 6. Create a spatial-block partition for the data based on continuous predictors
+
+#' pull out the continuous predictors
+#' use datatype to determine which predictors are continuous
+i <- 1
+
+env_layer <- list()
+for (i in 1:nlyr(cropped_predictors)) {
+  dt <- terra::datatype(cropped_predictors[[i]])
+  # If datatype is FLT4S, then place in env_layers, otherwise skip
+  if (dt == "FLT4S" | dt == "INT2U" | dt == "INT2S") {
+    env_layer[[i]] <- cropped_predictors[[i]]
+  } else {
+  }
+}
+
+env_layer <- terra::rast(env_layer)
+
 no_parts <- 5
-## sp_part3 <- part_sblock(
-##   env_layer = base_raster,
-##   data = filt_geo[[1]],
-##   x = "x",
-##   y = "y",
-##   pr_ab = "p_a",
-##   min_res_mult = 10, # Minimum value used for multiplying raster resolution and define the finest resolution to be tested
-##   max_res_mult = 1000, # Maximum value used for multiplying raster resolution and define the coarsest resolution to be tested
-##   num_grids = 50, # Number of grid to be tested between min_res_mult X (raster resolution) and max_res_mult X (raster resolution)
-##   n_part = no_parts, # Number of partitions
-##   prop = 0.5, # Proportion of points used for testing autocorrelation between groups (0-1)
-##   min_occ = floor(length(filt_geo$fkey)/(no_parts*2)) # Minimum number of occurrences to be used in each partition
-## )
+s <- Sys.time()
+sp_part3 <- part_sblock(
+  env_layer = env_layer,
+  data = filt_geo[[11]],
+  x = "x",
+  y = "y",
+  pr_ab = "pr_ab",
+  min_res_mult = 2, # Minimum value used for multiplying raster resolution and define the finest resolution to be tested
+  max_res_mult = 300, # Maximum value used for multiplying raster resolution and define the coarsest resolution to be tested
+  num_grids = 80, # Number of grid to be tested between min_res_mult X (raster resolution) and max_res_mult X (raster resolution)
+  n_part = no_parts, # Number of partitions
+  prop = 1, # Proportion of points used for testing autocorrelation between groups (0-1)
+  min_occ = 10 # Minimum number of occurrences to be used in each partition
+)
+
+sp_part4 <- part_senv(
+  env_layer = cropped_predictors,
+  data = filt_geo[[1]],
+  x = "x",
+  y = "y",
+  pr_ab = "pr_ab",
+  min_n_groups = 2,
+  max_n_groups = nlyr(cropped_predictors),
+  prop = 1,
+  min_occ = floor(length(filt_geo$fkey)/(no_parts*1.1))
+)
+
+plot(regions, col = gray.colors(9))
+points(sp_part4$part[c("x", "y")],
+  col = hcl.colors(length(unique(filt_geo[[1]]$x)))[sp_part4$part$.part],
+  cex = 1,
+  pch = 19
+)
 
 ## grid_env <- get_block(env_layer = base_raster, best_grid = sp_part3$grid)
 
