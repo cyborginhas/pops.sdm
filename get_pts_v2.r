@@ -856,6 +856,7 @@ export_data <- function(occs, path) {
         row.names = FALSE
       )
     } else {
+      occs[[2]] <- convert_dates(occs[[2]])
       # Export metadata
       data.table::fwrite(occs[[2]], paste0(
         path, "Original/host-occurrences/hostpts_metadata.csv"
