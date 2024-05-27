@@ -109,6 +109,9 @@ crop_predictor <- function(
         cropped_raster,
         trans = "std"
       )
+      terra::writeRaster(zscore_raster, zscore_file,
+        overwrite = TRUE, gdal = "COMPRESS=ZSTD", datatype = "FLT4S"
+      )
     } else {
       zscore_raster <- cropped_raster
     }
@@ -476,3 +479,116 @@ create_thickened_bg_pts <- function(
   ))
   return(occs_p)
 }
+
+#' @description Function to create a target group bias file from
+#' iNaturalist tree occurrence data. The function returns the target
+#' group bias file to be used with the sample_background function.
+#' @param path A path to the Data folder.
+#' @param extent The base raster cropped to the extent of interest.
+#' @param domain The domain of interest. Options are "USA" or "Global".
+#' @param res The resolution of the base raster.
+
+target_group_rbias_lyr <- function(path, extent, domain, res) {
+  fn <- paste0(tg_outpath, "TargetGroup_biasfile.tif")
+  if (!file.exists(fn)) {
+    # Copy the tree data to the target group directory
+    path2 <- gsub(
+      "/.*",
+      "/auto_arborist_cvpr2022_v0.15/data/tree_classification/inat/metadata/", # nolint
+      path
+    )
+    tg_outpath <- paste0(
+      getwd(),
+      "/flexsdm_results/1_Inputs/1_Occurrences/background/target_group/"
+    ) # nolint
+
+    dir.create(tg_outpath, showWarnings = FALSE, recursive = TRUE)
+
+    if (domain == "USA") {
+      file.copy(
+        paste0(path2, "tree_observations_uscanada.csv"),
+        paste0(tg_outpath, "tree_observations_uscanada.csv")
+      )
+    } else {
+      file.copy(
+        paste0(path2, "tree_observations_global.csv"),
+        paste0(tg_outpath, "tree_observations_global.csv")
+      )
+    }
+
+    # Read in the tree data
+    trees <- data.table::fread(paste0(
+      tg_outpath,
+      "tree_observations_uscanada.csv"
+    ))
+    base_extent <- terra::ext(extent)
+
+    # Crop the tree data to the extent of interest
+    trees <- trees[longitude >= base_extent[1] & longitude <= base_extent[2] &
+                     latitude >= base_extent[3] & latitude <= base_extent[4], ]
+    trees <- unique(trees[, .(longitude, latitude,
+                      sciname = paste0(genus, " ", species)
+                    )])
+    trees <- unique(trees[, .(count = .N), by = .(longitude, latitude)])
+
+    # Write out the tree data
+    data.table::fwrite(trees, paste0(tg_outpath,
+                                     "tree_observations_cropped.csv"),
+                       row.names = FALSE)
+
+    # Delete the original tree data
+    file.remove(paste0(tg_outpath, "tree_observations_uscanada.csv"))
+
+    # Calculate scale for the tree data
+    scale <- 1 / sum(trees$count)
+    trees$scale <- trees$count * scale
+    trees_crds <- as.matrix(trees[, .(longitude, latitude)])
+    # Do a 2d kernel density estimation
+    target_density <- ks::kde(trees_crds,
+      w = trees$scale,
+      gridsize = c(nrow(extent), ncol(extent))
+    )
+    target_raster <- extent
+    terra::values(target_raster) <- target_density$estimate
+
+    # Write out the target bias file
+    terra::writeRaster(target_raster, paste0(
+      tg_outpath,
+      "TargetGroup_biasfile_raw.tif"
+    ),
+    datatype = "FLT4S", gdal = "COMPRESS=ZSTD", overwrite = TRUE
+    )
+
+    # Normalize the target bias file between 0 and 1
+    min <- terra::global(target_raster, "min")
+    min <- min$min
+
+    f <- function(i) i - min
+    target_raster <- terra::app(target_raster, f)
+    target_raster <- spatialEco::raster.transformation(target_raster,
+      trans = "norm"
+    )
+    terra::writeRaster(target_raster, paste0(
+      tg_outpath,
+      "TargetGroup_biasfile.tif"
+    ),
+    overwrite = TRUE, datatype = "FLT4S", gdal = "COMPRESS=ZSTD"
+    )
+  } else {
+    target_raster <- terra::rast(fn)
+  }
+  return(target_raster)
+}
+
+
+#' @description Function to create a bias file from the population
+#' density data.
+
+pop_density_rbias_lyr <- function(){
+  # Read in the population density data
+  pop_density <- terra::rast("data/population_density.tif")
+  # Crop the population density data to the extent of interest
+  pop_density <- terra::crop(pop_density, extent)
+  # Normalize the population density data between 0 and 1
+  pop_density <- spatialEco::raster.transformation(pop_density)
+  }
