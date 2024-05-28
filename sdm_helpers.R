@@ -489,21 +489,22 @@ create_thickened_bg_pts <- function(
 #' @param res The resolution of the base raster.
 
 target_group_rbias_lyr <- function(path, extent, domain, res) {
+  # Copy the tree data to the target group directory
+  path2 <- gsub(
+    "/.*",
+    "/auto_arborist_cvpr2022_v0.15/data/tree_classification/inat/metadata/", # nolint
+    path
+  )
+
+  tg_outpath <- paste0(
+    getwd(),
+    "/flexsdm_results/1_Inputs/1_Occurrences/background/target_group/"
+  ) # nolint
+
+  dir.create(tg_outpath, showWarnings = FALSE, recursive = TRUE)
+
   fn <- paste0(tg_outpath, "TargetGroup_biasfile.tif")
   if (!file.exists(fn)) {
-    # Copy the tree data to the target group directory
-    path2 <- gsub(
-      "/.*",
-      "/auto_arborist_cvpr2022_v0.15/data/tree_classification/inat/metadata/", # nolint
-      path
-    )
-    tg_outpath <- paste0(
-      getwd(),
-      "/flexsdm_results/1_Inputs/1_Occurrences/background/target_group/"
-    ) # nolint
-
-    dir.create(tg_outpath, showWarnings = FALSE, recursive = TRUE)
-
     if (domain == "USA") {
       file.copy(
         paste0(path2, "tree_observations_uscanada.csv"),
@@ -521,20 +522,26 @@ target_group_rbias_lyr <- function(path, extent, domain, res) {
       tg_outpath,
       "tree_observations_uscanada.csv"
     ))
+
     base_extent <- terra::ext(extent)
 
     # Crop the tree data to the extent of interest
     trees <- trees[longitude >= base_extent[1] & longitude <= base_extent[2] &
-                     latitude >= base_extent[3] & latitude <= base_extent[4], ]
+      latitude >= base_extent[3] & latitude <= base_extent[4], ]
+
     trees <- unique(trees[, .(longitude, latitude,
-                      sciname = paste0(genus, " ", species)
-                    )])
+      sciname = paste0(genus, " ", species)
+    )])
+
     trees <- unique(trees[, .(count = .N), by = .(longitude, latitude)])
 
     # Write out the tree data
-    data.table::fwrite(trees, paste0(tg_outpath,
-                                     "tree_observations_cropped.csv"),
-                       row.names = FALSE)
+    data.table::fwrite(trees, paste0(
+      tg_outpath,
+      "tree_observations_cropped.csv"
+    ),
+    row.names = FALSE
+    )
 
     # Delete the original tree data
     file.remove(paste0(tg_outpath, "tree_observations_uscanada.csv"))
@@ -543,21 +550,21 @@ target_group_rbias_lyr <- function(path, extent, domain, res) {
     scale <- 1 / sum(trees$count)
     trees$scale <- trees$count * scale
     trees_crds <- as.matrix(trees[, .(longitude, latitude)])
+
+    if (res == 30) {
+      base_extent <- terra::aggregate(extent, factor = 2)
+    } else {
+      base_extent <- extent
+    }
+
     # Do a 2d kernel density estimation
     target_density <- ks::kde(trees_crds,
       w = trees$scale,
-      gridsize = c(nrow(extent), ncol(extent))
+      gridsize = c(nrow(base_extent), ncol(base_extent))
     )
-    target_raster <- extent
-    terra::values(target_raster) <- target_density$estimate
 
-    # Write out the target bias file
-    terra::writeRaster(target_raster, paste0(
-      tg_outpath,
-      "TargetGroup_biasfile_raw.tif"
-    ),
-    datatype = "FLT4S", gdal = "COMPRESS=ZSTD", overwrite = TRUE
-    )
+    target_raster <- base_extent
+    terra::values(target_raster) <- target_density$estimate
 
     # Normalize the target bias file between 0 and 1
     min <- terra::global(target_raster, "min")
@@ -568,6 +575,13 @@ target_group_rbias_lyr <- function(path, extent, domain, res) {
     target_raster <- spatialEco::raster.transformation(target_raster,
       trans = "norm"
     )
+
+    if (res == 30) {
+      target_raster <- terra::resample(target_raster, extent)
+    } else {
+      target_raster <- target_raster
+    }
+
     terra::writeRaster(target_raster, paste0(
       tg_outpath,
       "TargetGroup_biasfile.tif"
@@ -580,15 +594,158 @@ target_group_rbias_lyr <- function(path, extent, domain, res) {
   return(target_raster)
 }
 
+#' @description Function to create a population density bias file from
+#' the Population Density raster. The function returns the population
+#' density bias file to be used with the sample_background function.
+#' @param path A path to the Data folder.
+#' @param extent The base raster cropped to the extent of interest.
+#' @param rbias_type The type of bias file to use. Options are
+#' "pop_density", "distance_roads", or "distance_rails".
+#' @param domain The domain of interest. Options are "USA" or "Global".
 
-#' @description Function to create a bias file from the population
-#' density data.
+human_factors_rbias_lyr <- function(path, extent, domain, rbias_type) {
+  # Create the output path
+  hf_outpath <- paste0(
+    getwd(),
+    "/flexsdm_results/1_Inputs/1_Occurrences/background/", rbias_type, "/"
+  )
+  dir.create(hf_outpath, showWarnings = FALSE, recursive = TRUE)
+  fn <- paste0(hf_outpath, paste0(rbias_type, "_biasfile.tif"))
 
-pop_density_rbias_lyr <- function(){
-  # Read in the population density data
-  pop_density <- terra::rast("data/population_density.tif")
-  # Crop the population density data to the extent of interest
-  pop_density <- terra::crop(pop_density, extent)
-  # Normalize the population density data between 0 and 1
-  pop_density <- spatialEco::raster.transformation(pop_density)
+  if (!file.exists(fn)) {
+    # Pull in the population density data from the Data folder
+    if (domain == "USA" & rbias_type == "pop_density") {
+      hf <- get_pop_conus(path)
+    } else if (domain == "Global" & rbias_type == "pop_density") {
+      hf <- get_pop_global(path)
+    } else if (domain == "USA" & rbias_type == "distance_roads") {
+      hf <- get_roads_conus(path)
+    } else if (domain == "Global" & rbias_type == "distance_roads") {
+      hf <- get_roads_global(path)
+    } else if (domain == "USA" & rbias_type == "distance_rails") {
+      hf <- get_rails_conus(path)
+    } else if (domain == "Global" & rbias_type == "distance_rails") {
+      hf <- get_rails_global(path)
+    }
+
+    # Crop the population density to the extent of interest and write it out
+    hf <- terra::crop(hf[[1]], extent, filename = paste0(
+      hf_outpath, rbias_type, "_original_cropped.tif"
+    ), wopt = list(
+      gdal = "COMPRESS=ZSTD", datatype = "FLT4S",
+      overwrite = TRUE
+    ))
+
+    hf <- log(hf)
+
+    if (rbias_type == "distance_roads" | rbias_type == "distance_rails") {
+      remove_infs <- function(x) {
+        x[x == -Inf] <- NA
+        return(x)
+      }
+      hf <- terra::app(hf, remove_infs)
+      hf <- terra::app(hf, function(x) -x)
+    } else {
+      hf <- hf
+    }
+
+    # Normalize bias file to between 0 and 1.
+    min <- terra::global(hf, "min", na.rm = TRUE)$min
+    hf <- terra::app(hf, function(x) x - min)
+
+    # Normalize bias file to between 0 and 1.
+    hf <- spatialEco::raster.transformation(hf, trans = "norm")
+    # Add 0.1 to the bias file to avoid 0 values
+    hf <- hf + 0.1
+    # Convert NA values to 0
+    hf <- terra::app(hf, function(x) ifelse(is.na(x), 0, x))
+    # Normalize
+    hf <- spatialEco::raster.transformation(hf, trans = "norm")
+    plot(hf)
+    terra::writeRaster(hf, paste0(
+      hf_outpath, rbias_type, "_biasfile.tif"
+    ), overwrite = TRUE, datatype = "FLT4S", gdal = "COMPRESS=ZSTD")
+    unlink(paste0(hf_outpath, rbias_type, "_original_cropped.tif"))
+  } else {
+    hf <- terra::rast(fn)
   }
+
+  return(hf)
+}
+
+
+#' @description Function to create sample background points using the
+#' @description A function to create thickened background points data
+#' and write the data to the local output path.
+#' @param partitioned_data A list of partitioned data occurrences, and the
+#' associated spatial block grid.
+#' @param rbias_lyr The bias file: target group raster, population raster, or
+#' distance rasters.
+#' @param rbias_type The type of bias file to use. Options are "target_group",
+#' "pop_density", "distance_roads", or "distance_rails".
+#' @param species The species name.
+#' associated grid.
+
+
+create_biased_bg_pts <- function(
+    partitioned_data, rbias_lyr,
+    rbias_type, species) {
+  s <- Sys.time()
+  occs_p <- partitioned_data[[1]]
+  grid_env <- partitioned_data[[2]]
+
+  # Disaggregate the spatial block grid
+  d <- unique(occs_p$d)
+  no_parts <- length(unique(occs_p$.part))
+
+  part_pts <- list()
+  bg_pts <- list()
+  grid_parts <- list()
+
+  for (i in 1:no_parts) {
+    s <- Sys.time()
+    part_pts[[i]] <- occs_p[occs_p$.part == i, ]
+    grid_parts[[i]] <- terra::ifel(grid_env == i, 1, NA)
+    bg_pts[[i]] <- flexsdm::sample_background(
+      data = part_pts[[i]],
+      x = "x",
+      y = "y",
+      n = length(part_pts[[i]]$x),
+      method = "biased",
+      rlayer = grid_parts[[i]],
+      maskval = 1,
+      rbias = rbias_lyr
+    )
+    bg_pts[[i]]$.part <- i
+    t <- Sys.time() - s
+    print(paste0(
+      "Time taken to create background points for part ", i, ": ",
+      t, " ", attr(t, "units")
+    ))
+  }
+
+  bg_pts <- data.table::rbindlist(bg_pts, use.names = TRUE, fill = TRUE)
+  # Combine the background points with the occurrences
+  occs_p <- data.table::rbindlist(list(occs_p, bg_pts),
+    use.names = TRUE,
+    fill = TRUE
+  )
+  occs_p$d <- d
+
+  # Write out the background points
+  bg_path <- paste0(
+    getwd(),
+    "/flexsdm_results/1_Inputs/1_Occurrences/background/", rbias_type, "/"
+  )
+  dir.create(bg_path, showWarnings = FALSE, recursive = TRUE)
+
+  data.table::fwrite(occs_p, paste0(
+    bg_path, species, "_", rbias_type, "_bg_pts_filtgeo_", d, "m2.csv"
+  ), row.names = FALSE)
+  t <- Sys.time() - s
+  print(paste0(
+    "Time taken to create background points: ", t, " ", attr(t, "units"),
+    " for ", length(occs_p$x), " points for filtgeo", d, "m2"
+  ))
+  return(occs_p)
+}
