@@ -282,13 +282,27 @@ geo_filter_occs <- function(occs, extent, d, species) {
   return(filt_geo)
 }
 
-#' @description Function to pull out the predictors that are categorical
-#' and create a list of the integer and continuous predictors.
+#' @description Function to remove the predictors that are categorical
+#' and retain a list of the integer and continuous predictors.
 #' @param predictor A predictor to be used in the analysis.
 
 get_numerical_rasters <- function(predictor) {
   dt <- terra::datatype(predictor)
   if (dt != "INT1U") {
+    predictor <- predictor
+  } else {
+    predictor <- NULL
+  }
+  return(predictor)
+}
+
+
+#' @description Function to keep the predictors that are categorical
+#' @param predictor A predictor to be used in the analysis.
+
+get_categorical_rasters <- function(predictor) {
+  dt <- terra::datatype(predictor)
+  if (dt == "INT1U") {
     predictor <- predictor
   } else {
     predictor <- NULL
@@ -602,8 +616,9 @@ target_group_rbias_lyr <- function(path, extent, domain, res) {
 #' @param rbias_type The type of bias file to use. Options are
 #' "pop_density", "distance_roads", or "distance_rails".
 #' @param domain The domain of interest. Options are "USA" or "Global".
+#' @param res The resolution of the base raster.
 
-human_factors_rbias_lyr <- function(path, extent, domain, rbias_type) {
+human_factors_rbias_lyr <- function(path, extent, domain, rbias_type, res) {
   # Create the output path
   hf_outpath <- paste0(
     getwd(),
@@ -614,20 +629,33 @@ human_factors_rbias_lyr <- function(path, extent, domain, rbias_type) {
 
   if (!file.exists(fn)) {
     # Pull in the population density data from the Data folder
-    if (domain == "USA" & rbias_type == "pop_density") {
-      hf <- get_pop_conus(path)
-    } else if (domain == "Global" & rbias_type == "pop_density") {
-      hf <- get_pop_global(path)
-    } else if (domain == "USA" & rbias_type == "distance_roads") {
-      hf <- get_roads_conus(path)
-    } else if (domain == "Global" & rbias_type == "distance_roads") {
-      hf <- get_roads_global(path)
-    } else if (domain == "USA" & rbias_type == "distance_rails") {
-      hf <- get_rails_conus(path)
-    } else if (domain == "Global" & rbias_type == "distance_rails") {
-      hf <- get_rails_global(path)
+    if (rbias_type == "pop_density") {
+      hf <- subset_rasters(path, domain,
+        all = FALSE, temp = FALSE,
+        precip = FALSE, topo = FALSE, land = FALSE, soils = FALSE, pop = TRUE,
+        gdd = FALSE, biotic = FALSE, light = FALSE, rails = FALSE, roads = FALSE,
+        downscaled = FALSE
+      )
+    } else if (rbias_type == "distance_roads") {
+      hf <- subset_rasters(path, domain,
+        all = FALSE, temp = FALSE,
+        precip = FALSE, topo = FALSE, land = FALSE, soils = FALSE, pop = FALSE,
+        gdd = FALSE, biotic = FALSE, light = FALSE, rails = FALSE, roads = TRUE,
+        downscaled = FALSE
+      )
+    } else if (rbias_type == "distance_rails") {
+      hf <- subset_rasters(path, domain,
+        all = FALSE, temp = FALSE,
+        precip = FALSE, topo = FALSE, land = FALSE, soils = FALSE, pop = FALSE,
+        gdd = FALSE, biotic = FALSE, light = FALSE, rails = TRUE, roads = FALSE,
+        downscaled = FALSE
+      )
     }
-
+    hf_files <- as.vector(unlist(lapply(hf, function(x) {
+      get_filename(x, "USA", path)
+    })))
+    subset_files <- hf_files[grep(res, hf_files)]
+    hf <- terra::rast(subset_files)
     # Crop the population density to the extent of interest and write it out
     hf <- terra::crop(hf[[1]], extent, filename = paste0(
       hf_outpath, rbias_type, "_original_cropped.tif"
@@ -635,6 +663,8 @@ human_factors_rbias_lyr <- function(path, extent, domain, rbias_type) {
       gdal = "COMPRESS=ZSTD", datatype = "FLT4S",
       overwrite = TRUE
     ))
+    # plot all values <1000
+    hf2 <- terra::ifel(hf[[1]] < 1000, NA, hf)
 
     hf <- log(hf)
 
@@ -648,20 +678,19 @@ human_factors_rbias_lyr <- function(path, extent, domain, rbias_type) {
     } else {
       hf <- hf
     }
-
     # Normalize bias file to between 0 and 1.
     min <- terra::global(hf, "min", na.rm = TRUE)$min
     hf <- terra::app(hf, function(x) x - min)
 
     # Normalize bias file to between 0 and 1.
     hf <- spatialEco::raster.transformation(hf, trans = "norm")
+
     # Add 0.1 to the bias file to avoid 0 values
     hf <- hf + 0.1
     # Convert NA values to 0
     hf <- terra::app(hf, function(x) ifelse(is.na(x), 0, x))
     # Normalize
     hf <- spatialEco::raster.transformation(hf, trans = "norm")
-    plot(hf)
     terra::writeRaster(hf, paste0(
       hf_outpath, rbias_type, "_biasfile.tif"
     ), overwrite = TRUE, datatype = "FLT4S", gdal = "COMPRESS=ZSTD")
@@ -703,7 +732,6 @@ create_biased_bg_pts <- function(
   grid_parts <- list()
 
   for (i in 1:no_parts) {
-    s <- Sys.time()
     part_pts[[i]] <- occs_p[occs_p$.part == i, ]
     grid_parts[[i]] <- terra::ifel(grid_env == i, 1, NA)
     bg_pts[[i]] <- flexsdm::sample_background(
@@ -717,11 +745,6 @@ create_biased_bg_pts <- function(
       rbias = rbias_lyr
     )
     bg_pts[[i]]$.part <- i
-    t <- Sys.time() - s
-    print(paste0(
-      "Time taken to create background points for part ", i, ": ",
-      t, " ", attr(t, "units")
-    ))
   }
 
   bg_pts <- data.table::rbindlist(bg_pts, use.names = TRUE, fill = TRUE)
@@ -748,4 +771,113 @@ create_biased_bg_pts <- function(
     " for ", length(occs_p$x), " points for filtgeo", d, "m2"
   ))
   return(occs_p)
+}
+
+#'@description Function to conduct cluster analysis on the predictors
+#' based on the correlation threshold. A sample_size is used to reduce
+#' the time taken to perform the cluster analysis.
+#' @param data A list of  predictors that have been z-score
+#' normalized.
+#' @param sample_size The number of samples to use in the cluster analysis.
+#' @param mincor The minimum correlation threshold to use in the cluster analysis.
+#' @param categorical_vars A list of categorical variables to include in the
+
+cluster_analysis <- function(data, sample_size, mincor, categorical_vars) {
+  # Perform cluster analysis
+  tryCatch(
+      {
+        sample <- terra::spatSample(data,
+          size = sample_size, method = "regular",
+          as.df = TRUE, na.rm = TRUE, values = TRUE,
+          xy = TRUE
+        )
+        # Z-score normalization: (x - mean(x)) / sd(x)) apply to each column
+        col_names <- names(sample)
+        sample <- as.data.table(lapply(sample, z_score_normalization))
+        names(sample) <- paste0(col_names, "_zscore")
+        # Keep all columns except 1:2 and cat_cols
+        ccres <- klaR::corclust(sample[,-c(1:2)])
+      },
+      error = function(e) {
+        message("An error occurred: ", e$message)
+        message("Please increase the sample_size.")
+      }
+    )
+  # Create hierarchical cluster tree based correlation threshold
+  cluster_dt <- klaR::cvtree(ccres, mincor = mincor)
+  vars <- rownames(cluster_dt$correlations)
+  cluster_dt <- as.data.table(cluster_dt$correlations)
+  cluster_dt$var <- vars
+
+  # Reassign clusters
+  cluster_dt[, clustercount := .N, by = .(cluster)]
+  singles <- cluster_dt[cluster_dt$clustercount == 1 &
+    cluster_dt$av.cor2closest < mincor]
+  multis <- cluster_dt[cluster_dt$clustercount > 1]
+  multisfix <- multis[av.cor2closest > mincor, ]
+  multisfix[, cluster := pmin(cluster, closest)]
+  multis <- multis[av.cor2closest < mincor, ]
+  cluster_dt <- rbind(singles, multis, multisfix)
+  cluster_dt <- cluster_dt[, .(var, cluster)]
+  cluster_dt <- cluster_dt[order(cluster_dt$cluster, cluster_dt$var)]
+  # Add categorical variables to the cluster assignments
+  if (!is.null(categorical_vars)) {
+    cat_vars <- names(categorical_vars)
+    cat_clusters <- max(cluster_dt$cluster) + 1:length(cat_vars)
+    cat_vars <- data.table(var = cat_vars, cluster = cat_clusters)
+    cluster_dt <- rbind(cluster_dt, cat_vars)
+  }
+  return(cluster_dt)
+}
+
+
+#' @description Generate combinations of variables based on clusters
+#' @param vars A character vector containing the variable names
+#' @param clusters A character vector containing the cluster assignments
+#' @return A list containing data frames of variable combinations for each
+#' cluster count
+
+generate_combinations <- function(vars, clusters) {
+  # Ensure clusters are treated as characters for consistent indexing
+  clusters <- as.character(clusters)
+  # Split the variables by their cluster
+  split_vars <- split(vars, clusters)
+  # Prepare a list to store the combinations for each cluster count
+  all_combinations <- list()
+  # Get all unique cluster numbers
+  unique_clusters <- unique(clusters)
+  # Generate combinations for selecting clusters
+  for (num_clusters in seq_along(unique_clusters)) {
+    cluster_combos <- combn(unique_clusters, num_clusters, simplify = FALSE)
+    # Generate variable combinations for each cluster combination
+    for (cluster_combo in cluster_combos) {
+      # Get the variables for the current combination of clusters
+      vars_in_combo <-
+        lapply(
+          cluster_combo,
+          function(cluster) {
+            split_vars[[as.character(cluster)]]
+          }
+        )
+      if (length(vars_in_combo) > 0) {
+        var_combos <- expand.grid(vars_in_combo, stringsAsFactors = FALSE)
+        # Create a unique key for the combination
+        key <- paste(cluster_combo, collapse = "-")
+        all_combinations[[key]] <- var_combos
+      }
+    }
+  }
+  return(all_combinations)
+}
+
+#' @description Extract predictors from a list of combinations to be used in
+#' in best variables selection
+#' @param combinations A list containing data frames of variable combinations
+#' @return A list containing vectors of variable names for each combination
+
+extract_predictors <- function(combinations) {
+  predictors <- lapply(combinations, function(combo) {
+    combo$Var1
+  })
+  return(predictors)
 }
