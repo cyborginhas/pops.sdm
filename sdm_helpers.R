@@ -927,3 +927,24 @@ create_testing_set <- function(path, extent, species) {
   return(testing_sets)
 }
 
+#' Function to setup sdm prepped datasets for
+#' analysis.
+#' @param data The target group background points data
+splitpts4sdm <- function(data) {
+  #' Remove unnecessary columns: d, x, y using data.table
+  data <- data[, c("d", "x", "y") := NULL]
+  #' Rename NLCD Land Cover Class to landcoverrc
+  setnames(data, "NLCD Land Cover Class", "landcoverrc")
+  #' Convert to tibble
+  data <- tibble::as_tibble(data)
+  #' Train on .part == 1:4; test on .part == 5
+  no_parts <- length(unique(data$.part))
+  data <- data[data$.part %in% 1:(no_parts - 1),]
+  #' Pull out presence-absence data
+  response <- data[data$pr_ab == 1, ]
+  #' Add id column
+  response$id <- 1:nrow(response)
+  #' Pull out background data; pr_ab == 0
+  bg <- data[data$pr_ab == 0,]
+  return(list(response = response, bg = bg))
+}
