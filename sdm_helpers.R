@@ -325,11 +325,11 @@ spatial_block_partition <- function(occs, extent, env_layer, species) {
     x = "x",
     y = "y",
     pr_ab = "pr_ab",
-    n_part = 5,
+    n_part = 4,
     min_res_mult = 3,
-    max_res_mult = 300,
-    num_grids = 45,
-    prop = 0.75,
+    max_res_mult = 200,
+    num_grids = 30,
+    prop = 0.5,
     min_occ = 10
   )
 
@@ -791,10 +791,7 @@ cluster_analysis <- function(data, sample_size, mincor, categorical_vars) {
           as.df = TRUE, na.rm = TRUE, values = TRUE,
           xy = TRUE
         )
-        # Z-score normalization: (x - mean(x)) / sd(x)) apply to each column
-        col_names <- names(sample)
-        sample <- as.data.table(lapply(sample, z_score_normalization))
-        names(sample) <- paste0(col_names, "_zscore")
+
         # Keep all columns except 1:2 and cat_cols
         ccres <- klaR::corclust(sample[,-c(1:2)])
       },
@@ -837,47 +834,96 @@ cluster_analysis <- function(data, sample_size, mincor, categorical_vars) {
 #' @return A list containing data frames of variable combinations for each
 #' cluster count
 
-generate_combinations <- function(vars, clusters) {
-  # Ensure clusters are treated as characters for consistent indexing
-  clusters <- as.character(clusters)
-  # Split the variables by their cluster
-  split_vars <- split(vars, clusters)
-  # Prepare a list to store the combinations for each cluster count
+generate_combinations <- function(df) {
+  # Ensure the data frame is sorted by cluster
+  df <- dplyr::arrange(df, cluster)
+  
+  # Split the data frame by cluster
+  split_df <- split(df, df$cluster)
+  
+  # Filter out empty lists from split_df
+  split_df <- split_df[sapply(split_df, nrow) > 0]
+  
+  # Generate all combinations
   all_combinations <- list()
-  # Get all unique cluster numbers
-  unique_clusters <- unique(clusters)
-  # Generate combinations for selecting clusters
-  for (num_clusters in seq_along(unique_clusters)) {
-    cluster_combos <- combn(unique_clusters, num_clusters, simplify = FALSE)
-    # Generate variable combinations for each cluster combination
-    for (cluster_combo in cluster_combos) {
-      # Get the variables for the current combination of clusters
-      vars_in_combo <-
-        lapply(
-          cluster_combo,
-          function(cluster) {
-            split_vars[[as.character(cluster)]]
-          }
-        )
-      if (length(vars_in_combo) > 0) {
-        var_combos <- expand.grid(vars_in_combo, stringsAsFactors = FALSE)
-        # Create a unique key for the combination
-        key <- paste(cluster_combo, collapse = "-")
-        all_combinations[[key]] <- var_combos
-      }
-    }
+  
+  # Generate combinations of varying lengths (1 to max(cluster))
+  max_cluster <- max(df$cluster)
+  for (i in 1:max_cluster) {
+    combs <- expand.grid(lapply(split_df[1:min(i, length(split_df))], function(x) x$var), stringsAsFactors = FALSE)
+    all_combinations <- append(all_combinations, list(combs))
   }
-  return(all_combinations)
+  
+  # Combine all combinations into a single data frame
+  final_combinations <- dplyr::bind_rows(all_combinations)
+  
+  return(final_combinations)
 }
 
-#' @description Extract predictors from a list of combinations to be used in
-#' in best variables selection
-#' @param combinations A list containing data frames of variable combinations
-#' @return A list containing vectors of variable names for each combination
+#' @description Function to append enviromental data to the partitioned
+#' presence-background data
+#' @param part_data A list of partitioned data presence-background data.
+#' @param env_layer The list of predictors to extract.
+#' @param bg_method The method used to sample the background points: random,
+#' thicken, or biased: target_group, pop_density, distance_roads, or 
+#' distance_rails.
+#' @param species The species name.
 
-extract_predictors <- function(combinations) {
-  predictors <- lapply(combinations, function(combo) {
-    combo$Var1
-  })
-  return(predictors)
+append_env_data <- function(part_data, env_layer, bg_method, species) {
+  s <- Sys.time()
+  d <- unique(part_data$d)
+  # Convert to spatvect
+  part_data <- terra::vect(part_data, crs = terra::crs(env_layer), geom = c("x", "y"))
+  # Extract the environmental data
+  part_data <- terra::extract(env_layer, part_data, ID = FALSE, xy = TRUE, bind = TRUE, method = "simple")
+  part_data <- data.table::as.data.table(part_data)
+  fwrite(part_data, paste0(
+    getwd(), "/flexsdm_results/1_Inputs/1_Occurrences/background/", bg_method, "/",
+    species, "_", bg_method, "_bg_pts_filtgeo_", d, "m2_wpreds.csv"
+  ), row.names = FALSE)
+  t <- Sys.time() - s
+  print(paste0(
+    "Time taken to append predictor data: ", t, " ", attr(t, "units")
+  ))
+  return(part_data)
 }
+
+#' @description Function to pull in systematically sampled occurrence data
+#' from NEON and VMI NPS Inventory data and create testing sets for
+#' independent validation.
+#' @param path The path to the Data folder.
+#' @param extent The base raster cropped to the extent of interest.
+#' @param species The species name.
+
+
+create_testing_set <- function(path, extent, species) {
+  test_data_path <- paste0(getwd(), "/flexsdm_results/1_Inputs/1_Occurrences/original/")
+  neon <- data.table::fread(paste0(test_data_path, species, "_test_occs.csv"))
+  vmi <- data.table::fread(paste0(path, "/Original/vmi_nps_inventory/data/cleaned/csv/aial.csv"))
+  vmi <- unique(vmi[, .(x = lon, y = lat, pr_ab = p_a)])
+  vmi <- vmi[, .(pr_ab = max(pr_ab)), by = .(x, y)]
+  test_data <- data.table::rbindlist(list(neon, vmi), fill = TRUE, use.names = TRUE)
+  test_data <- test_data[,.(x, y, pr_ab)]
+  test_data <- terra::vect(test_data, crs = terra::crs(extent), geom = c("x", "y"))
+  test_data <- terra::crop(test_data, extent)
+  test_data$x <- terra::crds(test_data)[, 1]
+  test_data$y <- terra::crds(test_data)[, 2]
+  pr_ab_1 <- data.table::as.data.table(test_data[test_data$pr_ab == 1])
+  pr_ab_0 <- data.table::as.data.table(test_data[test_data$pr_ab == 0])
+  # Randomly select length(pr_ab_1) points from pr_ab_0 ten times
+  testing_sets <- list()
+
+  for (i in 1:5) {
+    pr_ab_0_sample <- pr_ab_0[sample(1:nrow(pr_ab_0), nrow(pr_ab_1)), ]
+    testing_set <- data.table::rbindlist(list(pr_ab_1, pr_ab_0_sample), fill = TRUE)
+    testing_sets[[i]] <- testing_set
+    testing_sets[[i]]$setid <- i
+  }
+  testing_sets <- data.table::rbindlist(testing_sets, fill = TRUE)
+  fwrite(testing_sets, paste0(
+    getwd(), "/flexsdm_results/1_Inputs/1_Occurrences/original/",
+    species, "_testing_sets.csv"
+  ), row.names = FALSE)
+  return(testing_sets)
+}
+
