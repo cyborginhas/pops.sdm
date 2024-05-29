@@ -8,7 +8,7 @@ library(parallel)
 library(spatialEco)
 
 path <- "Z:/pops_pesthostuse/pops.sdm/Data/"
-setwd("D:/blaginh/sdm_full_extent/")
+setwd("C:/Users/blaginh/Desktop/sdm_truncated_extent/")
 domain <- "USA"
 extent <- "D:/blaginh/sdm_full_extent/misc/ext25.gpkg"
 res <- 30
@@ -19,9 +19,9 @@ flexsdm::sdm_directory(
 )
 
 #' 3. Create base raster for the study extent
-source("C:/Users/blaginh/Documents/GitHub/pops.sdm/pops.sdm/sdm_helpers.R")
-source("C:/Users/blaginh/Documents/Github/pops.sdm/pops.sdm/get_envi_chunked.R") # get_topo_global # nolint
-source("C:/Users/blaginh/Documents/Github/pops.sdm/pops.sdm/raster_base.R") # base_raster at correct resolution and extent # nolint
+source("C:/Users/blaginh/Documents/GitHub/pops.sdm/sdm_helpers.R")
+source("C:/Users/blaginh/Documents/Github/pops.sdm/get_envi_chunked.R") # get_topo_global # nolint
+source("C:/Users/blaginh/Documents/Github/pops.sdm/raster_base.R") # base_raster at correct resolution and extent # nolint
 
 res <- fix_resolution(res, domain)
 base <- crop_base_raster(domain, res, path, extent)
@@ -60,7 +60,7 @@ for (i in seq_along(subset_files)) {
 #' 4. Load the species occurrence data
 species <- "Ailanthus altissima"
 species <- format_species_name(species)
-source("C:/Users/blaginh/Documents/Github/pops.sdm/pops.sdm/get_pts_v2.r")
+source("C:/Users/blaginh/Documents/Github/pops.sdm/get_pts_v2.r")
 occs_file <- paste0(getwd(), "/flexsdm_results/1_Inputs/1_Occurrences/original/",
                    species, "_train_occs.csv")
 
@@ -248,6 +248,16 @@ clusters[var == "NLCD Land Cover Class",]$var <- "landcoverrc"
 combos <- generate_combinations(clusters)
 
 #' 10. Extract predictors for model fitting
+bg_method <- c("random", "thicken", "target_group", "pop_density", "distance_roads", "distance_rails")
+fn <- vector("list", length(bg_method))
+for (i in seq_along(bg_method)) {
+  fn[[i]] <- paste0(getwd(), "/flexsdm_results/1_Inputs/1_Occurrences/background/", 
+                    bg_method[i], "/", species, "_", bg_method[i], "_bg_pts_filtgeo_",
+                    cellsizes, "m2_wpreds.csv")
+}
+# Collapse the list
+fn <- unlist(fn)
+
 random_pts_wdata <- list()
 thickened_pts_wdata <- list()
 tg_pts_wdata <- list()
@@ -257,156 +267,73 @@ rails_pts_wdata <- list()
 
 cropped_predictors <- rast(cropped_predictors)
 
+if(!all(file.exists(fn))) {
 for (i in seq_along(cellsizes)) {
   random_pts_wdata[[i]] <- append_env_data(random_pts[[i]], cropped_predictors, bg_method = "random", species)
   thickened_pts_wdata[[i]] <- append_env_data(thickened_pts[[i]], cropped_predictors, bg_method = "thicken", species)
   tg_pts_wdata[[i]] <- append_env_data(tg_pts[[i]], cropped_predictors, bg_method = "target_group", species)
-  #pop_pts_wdata[[i]] <- append_env_data(pop_pts[[i]], cropped_predictors, bg_method = "pop_density", species)
-  #roads_pts_wdata[[i]] <- append_env_data(roads_pts[[i]], cropped_predictors, bg_method = "distance_roads", species)
-  #rails_pts_wdata[[i]] <- append_env_data(rails_pts[[i]], cropped_predictors, bg_method = "distance_rails", species)
+  pop_pts_wdata[[i]] <- append_env_data(pop_pts[[i]], cropped_predictors, bg_method = "pop_density", species)
+  roads_pts_wdata[[i]] <- append_env_data(roads_pts[[i]], cropped_predictors, bg_method = "distance_roads", species)
+  rails_pts_wdata[[i]] <- append_env_data(rails_pts[[i]], cropped_predictors, bg_method = "distance_rails", species)
+}
+} else {
+random_pts_wdata <- lapply(fn[grep("random", fn)], fread)
+thickened_pts_wdata <- lapply(fn[grep("thicken", fn)], fread)
+tg_pts_wdata <- lapply(fn[grep("target_group", fn)], fread)
+pop_pts_wdata <- lapply(fn[grep("pop_density", fn)], fread)
+roads_pts_wdata <- lapply(fn[grep("distance_roads", fn)], fread)
+rails_pts_wdata <- lapply(fn[grep("distance_rails", fn)], fread)
 }
 
 #' 12. Fit models
 #' Tune hyperparameters for maxent
 gridtest <-
   expand.grid(
-    regmult = seq(0.1, 3, 0.5),
-    classes = c("l", "lq", "lqh", "lqhp")
+    regmult = seq(0.1, 3.6, 0.5),
+    classes = c("l", "lh", "lq", "lqh", "lqp")
   )
 
 #' Prep data for maxent
-#' Target group background points
-data <- tg_pts_wdata[[1]]
-#' Remove unncessary columns: d, x, y using data.table
-data <- data[, c("d", "x", "y") := NULL]
-#' Rename NLCD Land Cover Class to landcoverrc
-setnames(data, "NLCD Land Cover Class", "landcoverrc")
-#' Convert to tibble
-data <- tibble::as_tibble(data)
-# Train on .part == 1:4; test on .part == 5
-data <- data[data$.part %in% 1:4,]
-#' Pull out presence-absence data
-response <- data[data$pr_ab == 1, ]
-#' Add id column
-response$id <- 1:nrow(response)
-#' Pull out background data; pr_ab == 0
-bg <- data[data$pr_ab == 0,]
+occs <- splitpts4sdm(tg_pts_wdata[[1]])
 
 #Combos with categorical predictors
-combos <- data.frame(combos)
-combos_f <- combos %>% filter(X12 == "landcoverrc")
-combos_num <- combos %>% filter(is.na(X12))
+combos <- data.table::as.data.table(combos)
+colnames(combos) <- paste0("cluster_", 1:12)
+combos_f <- combos[!is.na(cluster_12),]
+combos_num <- combos[is.na(cluster_12),]
 
-# Fit maxent model
-# Pull out row as a vector
-row <- combos[3000,]
-row <- as.vector(t(row))
-# remove NA
-row <- row[!is.na(row)]
-# remove NA
-s <- Sys.time()
-max_t1 <- flexsdm::tune_max(
-  data = data,
-  response = "pr_ab",
-  predictors = c("bio1", "bio2"),
-  background = bg,
-  partition = ".part",
-  grid = expand.grid(
-    regmult = seq(0.5, 5, 0.5),
-    classes = c("l", "lh", "lq", "lp", "lqh", "lqp")
-  ),
-  thr = c("max_sens_spec"),
-  metric = "BOYCE",
-  clamp = TRUE,
-  pred_type = "cloglog",
-  n_cores = 32
-)
-t <- Sys.time() - s
-print(paste0("Time taken: ", t, " ", attr(t, "units")))
-length(max_t1)
-max_t1$model
-max_t1$predictors
-max_t1$performance
-max_t1$data_ens
+# Create outpath
+model_outpath <- paste0(getwd(), "/flexsdm_results/2_Outputs/0_Model_performance/")
+dir.create(paste0(model_outpath, "/failed/"), showWarnings = FALSE, recursive = TRUE)
+dir.create(paste0(model_outpath, "/completed/"), showWarnings = FALSE, recursive = TRUE)
 
-# Chunks of predictors
-for (j in 6:length(predictors)) {
-  predictors2 <- predictors[[j]]
-  n_cores <- detectCores()
-  cluster <- makeCluster(n_cores - 1)
-  registerDoParallel(cluster)
-
-  mglm <- foreach(i = 1:length(predictors2), .packages = c("glmnet", "caret")) %dopar% {
-    flexsdm::fit_glm(
-      data = occs_pa,
-      response = "pr_ab",
-      predictors = predictors2[[i]],
-      partition = ".part",
-      thr = "max_sens_spec" # same as max TSS
-    )
-  }
-  stopCluster(cl = cluster)
-
-  # Pull out models with highest AIC and TSS
-  aic <- lapply(mglm, function(x) x$model$aic)
-  model_bestaic <- mglm[[which.min(aic)]]
-  saveRDS(model_bestaic, paste0(path, "hostmap/", species, "_mglm_aic_", j, ".RData"))
-
-  tss <- lapply(mglm, function(x) x$performance$TSS_mean)
-  model_besttss <- mglm[[which.max(tss)]]
-  saveRDS(model_besttss, paste0(path, "hostmap/", species, "_mglm_tss_", j, ".RData"))
-  beepr::beep(1)
-  tmpFiles(orphan = TRUE, old = TRUE, remove = TRUE)
-  gc()
-  rm(mglm)
-}
-
-# Re-do with lc
-occs_pa$landcoverrc <- as.factor(occs_pa$landcoverrc)
-
-# Chunks of predictors
-for (j in 1:length(predictors)) {
-  predictors2 <- predictors[[j]]
-  n_cores <- detectCores()
-  cluster <- makeCluster(n_cores - 1)
-  registerDoParallel(cluster)
-
-  mglm <- foreach(i = 1:length(predictors2), .packages = c("glmnet", "caret")) %dopar% {
-    flexsdm::fit_glm(
-      data = occs_pa,
-      response = "pr_ab",
-      predictors = predictors2[[i]],
-      predictors_f = c("landcoverrc"),
-      partition = ".part",
-      thr = "max_sens_spec" # same as max TSS
-    )
-  }
-  stopCluster(cl = cluster)
-
-  # Pull out models with highest AIC and TSS
-  aic <- lapply(mglm, function(x) x$model$aic)
-  model_bestaic <- mglm[[which.min(aic)]]
-  saveRDS(model_bestaic, paste0(path, "hostmap/", species, "lc_mglm_aic_", j, ".RData"))
-
-  tss <- lapply(mglm, function(x) x$performance$TSS_mean)
-  model_besttss <- mglm[[which.max(tss)]]
-  saveRDS(model_besttss, paste0(path, "hostmap/", species, "lc_mglm_tss_", j, ".RData"))
-  beepr::beep(1)
-  tmpFiles(orphan = TRUE, old = TRUE, remove = TRUE)
-  gc()
-  rm(mglm)
-}
-
-
-mraf <- fit_raf(
-  occs_pa,
-  "pr_ab",
-  predictors2[[1]],
-  partition = ".part",
-  thr = "max_sens_spec"
-  # metric = "TSS",
-  # grid = tune_grid
-)
-
-mraf$performance$TSS_mean
-
+# # Fit maxent model - no categorical predictors
+# for (i in 1:nrow(combos_num)) {
+#   row <- as.vector(t(combos_num[i, ]))
+#   row <- row[!is.na(row)]
+#   # Wrap in tryCatch to avoid errors
+#   tryCatch(
+#     {
+#       max_t1 <- flexsdm::tune_max(
+#         data = occs$response,
+#         response = "pr_ab",
+#         predictors = c(row),
+#         background = occs$bg,
+#         partition = ".part",
+#         grid = gridtest,
+#         thr = c("max_sens_spec"),
+#         metric = "TSS",
+#         clamp = TRUE,
+#         pred_type = "cloglog",
+#         n_cores = parallel::detectCores() - 3
+#       )
+#       saveRDS(max_t1, paste0(model_outpath, "completed/", species, "_", i, "_maxent_combos_num.RData"))
+#       print(paste0("Model ", i, " complete"))
+#     },
+#     error = function(e) {
+#       print(paste0("Model ", i, " failed"))
+#       # export csv with row data
+#       write.csv(row, paste0(model_outpath, "failed/", species, "_", i, "_maxent_combos_num.csv"))
+#     }
+#   )
+# }
