@@ -312,7 +312,7 @@ get_categorical_rasters <- function(predictor) {
 
 #' @description Function to partition the data using  environmenal
 #' and spatial cross-validation, and the inputs from geo_filter_occs.
-#' The function returns the partitionned data.
+#' The function returns the partitioned data.
 #' @param occs The filtered species occurrence data.
 #' @param env_layer The list of predictors.
 
