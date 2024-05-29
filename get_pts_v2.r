@@ -224,8 +224,9 @@ get_gbif_pts <- function(taxon_key, path) {
   sp <- taxon_key$species
   dateretrieved <- taxon_key$dateretrieved
   db <- taxon_key$database
+  day_diff <-Sys.Date() - as.Date(dateretrieved)
 
-  if (dateretrieved < Sys.Date() || is.na(dateretrieved)) {
+  if (day_diff > 6 || is.na(dateretrieved)) {
     date_range <- taxon_key$date_range
     dates <- get_dates(date_range, db = db)
     # Setup gbif function params
@@ -358,8 +359,10 @@ get_inat_pts <- function(taxon_key, path) {
   key <- taxon_key$speciesKey
   sp <- taxon_key$species
   dateretrieved <- taxon_key$dateretrieved
+  day_diff <-Sys.Date() - as.Date(dateretrieved)
 
-  if (dateretrieved < Sys.Date() || is.na(dateretrieved)) {
+
+  if (day_diff > 6 || is.na(dateretrieved)) {
     date_range <- taxon_key$date_range
     dates <- get_dates(date_range, db = "inat")
     # if dates is a list of dates
@@ -872,7 +875,6 @@ export_data <- function(occs, path) {
 #' @param path character string to the Data folder
 #' @param conus logical to indicate if regional data (neon) should be included
 #' @return a data.table of the cleaned occurrence data
-
 batch_get_pts <- function(scientific_name, taxon_rank, path, conus) {
   taxon_key <- get_gbif_keys(scientific_name, taxon_rank)
   taxon_key <- batch_upd_dates(taxon_key, path)
