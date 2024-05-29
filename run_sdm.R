@@ -8,9 +8,9 @@ library(parallel)
 library(spatialEco)
 
 path <- "Z:/pops_pesthostuse/pops.sdm/Data/"
-setwd("D:/blaginh/sdm_truncated_extent/")
+setwd("D:/blaginh/sdm_full_extent/")
 domain <- "USA"
-extent <- "D:/blaginh/sdm_truncated_extent/flexsdm_results/1_Inputs/3_Calibration_area/studyext.gpkg"
+extent <- "D:/blaginh/sdm_full_extent/misc/ext25.gpkg"
 res <- 30
 
 #' 2. Set up SDM directories
@@ -28,6 +28,7 @@ base <- crop_base_raster(domain, res, path, extent)
 
 #' 4. Copy predictors, crop to the study extent, and transform to z-scores
 predictors <- subset_rasters(path, domain = domain, all = FALSE, gdd = FALSE, roads = FALSE, rails = FALSE, pop = FALSE)
+
 
 files <- as.vector(unlist(lapply(predictors, function(x) {
   get_filename(x, "USA", path)
@@ -177,7 +178,7 @@ if (!all(file.exists(tg_files))) {
 
 #' Background points with population density as a bias layer
 rbias_type <- "pop_density"
-rbias_lyr <- human_factors_rbias_lyr(path, extent = base, domain, rbias_type)
+rbias_lyr <- human_factors_rbias_lyr(path, extent = base, domain, rbias_type, res)
 
 pop_files <- paste0(getwd(),
                           "/flexsdm_results/1_Inputs/1_Occurrences/background/", #nolint
@@ -196,8 +197,9 @@ if (!all(file.exists(pop_files))) {
 }
 
 #' Background points with dist2roads as a bias layer
+
 rbias_type <- "distance_roads"
-rbias_lyr <- human_factors_rbias_lyr(path, extent = base, domain, rbias_type)
+rbias_lyr <- human_factors_rbias_lyr(path, extent = base, domain, rbias_type,res)
 
 roads_files <- paste0(getwd(),
                           "/flexsdm_results/1_Inputs/1_Occurrences/background/", #nolint
@@ -216,9 +218,8 @@ if (!all(file.exists(roads_files))) {
 }
 
 #' Background points with dist2rails as a bias layer
-
 rbias_type <- "distance_rails"
-rbias_lyr <- human_factors_rbias_lyr(path, extent = base, domain, rbias_type)
+rbias_lyr <- human_factors_rbias_lyr(path, extent = base, domain, rbias_type, res)
 
 rails_files <- paste0(getwd(),
                           "/flexsdm_results/1_Inputs/1_Occurrences/background/", #nolint
@@ -237,26 +238,96 @@ if (!all(file.exists(rails_files))) {
 }
 
 #' 9. Conduct cluster analysis to remove collinearity
-source("create_clusters.R")
-clusters <- cluster_analysis(somevar_cont, 20000, 0.6, somevar_cat)
-combos <- generate_combinations(clusters$var, clusters$cluster)
-predictors <- extract_predictors(combos)
-length(predictors)
+categorical_lyrs <- list()
+for (i in seq_along(cropped_predictors)) {
+  categorical_lyrs[[i]] <- get_categorical_rasters(cropped_predictors[[i]])
+}
+categorical_lyrs <- rast(categorical_lyrs)
+clusters <- cluster_analysis(env_layer, 200000, 0.6, categorical_lyrs)
+clusters[var == "NLCD Land Cover Class",]$var <- "landcoverrc"
+combos <- generate_combinations(clusters)
 
-#' 10. Fit maxent models across all predictor sets
-ncores <- (detectCores() / 2) - 1
-makeCluster(ncores)
-model_name <- paste0("uniform_", species, "_")
-random_pts <- fread(paste0(response_path, "truncated/final/", species, "_p_a_random.csv"))
+#' 10. Extract predictors for model fitting
+random_pts_wdata <- list()
+thickened_pts_wdata <- list()
+tg_pts_wdata <- list()
+pop_pts_wdata <- list()
+roads_pts_wdata <- list()
+rails_pts_wdata <- list()
 
+cropped_predictors <- rast(cropped_predictors)
 
+for (i in seq_along(cellsizes)) {
+  random_pts_wdata[[i]] <- append_env_data(random_pts[[i]], cropped_predictors, bg_method = "random", species)
+  thickened_pts_wdata[[i]] <- append_env_data(thickened_pts[[i]], cropped_predictors, bg_method = "thicken", species)
+  tg_pts_wdata[[i]] <- append_env_data(tg_pts[[i]], cropped_predictors, bg_method = "target_group", species)
+  #pop_pts_wdata[[i]] <- append_env_data(pop_pts[[i]], cropped_predictors, bg_method = "pop_density", species)
+  #roads_pts_wdata[[i]] <- append_env_data(roads_pts[[i]], cropped_predictors, bg_method = "distance_roads", species)
+  #rails_pts_wdata[[i]] <- append_env_data(rails_pts[[i]], cropped_predictors, bg_method = "distance_rails", species)
+}
 
+#' 12. Fit models
+#' Tune hyperparameters for maxent
+gridtest <-
+  expand.grid(
+    regmult = seq(0.1, 3, 0.5),
+    classes = c("l", "lq", "lqh", "lqhp")
+  )
 
-#' 11. Pull out the best model based on TSS (independent testing set)
+#' Prep data for maxent
+#' Target group background points
+data <- tg_pts_wdata[[1]]
+#' Remove unncessary columns: d, x, y using data.table
+data <- data[, c("d", "x", "y") := NULL]
+#' Rename NLCD Land Cover Class to landcoverrc
+setnames(data, "NLCD Land Cover Class", "landcoverrc")
+#' Convert to tibble
+data <- tibble::as_tibble(data)
+# Train on .part == 1:4; test on .part == 5
+data <- data[data$.part %in% 1:4,]
+#' Pull out presence-absence data
+response <- data[data$pr_ab == 1, ]
+#' Add id column
+response$id <- 1:nrow(response)
+#' Pull out background data; pr_ab == 0
+bg <- data[data$pr_ab == 0,]
 
-#' 12. Predict the best model
+#Combos with categorical predictors
+combos <- data.frame(combos)
+combos_f <- combos %>% filter(X12 == "landcoverrc")
+combos_num <- combos %>% filter(is.na(X12))
 
-predictors <- split(predictors, ceiling(seq_along(predictors) / 1000))
+# Fit maxent model
+# Pull out row as a vector
+row <- combos[3000,]
+row <- as.vector(t(row))
+# remove NA
+row <- row[!is.na(row)]
+# remove NA
+s <- Sys.time()
+max_t1 <- flexsdm::tune_max(
+  data = data,
+  response = "pr_ab",
+  predictors = c("bio1", "bio2"),
+  background = bg,
+  partition = ".part",
+  grid = expand.grid(
+    regmult = seq(0.5, 5, 0.5),
+    classes = c("l", "lh", "lq", "lp", "lqh", "lqp")
+  ),
+  thr = c("max_sens_spec"),
+  metric = "BOYCE",
+  clamp = TRUE,
+  pred_type = "cloglog",
+  n_cores = 32
+)
+t <- Sys.time() - s
+print(paste0("Time taken: ", t, " ", attr(t, "units")))
+length(max_t1)
+max_t1$model
+max_t1$predictors
+max_t1$performance
+max_t1$data_ens
 
 # Chunks of predictors
 for (j in 6:length(predictors)) {
@@ -339,77 +410,3 @@ mraf <- fit_raf(
 
 mraf$performance$TSS_mean
 
-
-tune_grid <-
-  expand.grid(mtry = seq(1, 5, 1))
-
-
-mglm_sum <- as.data.table(mglm_sum)
-mglm_sum[order(-TSS_mean)]
-
-
-# 8. Ensemble models
-eglm <-
-  esm_glm(
-    data = occs_pa3,
-    response = "pr_ab",
-    predictors = preds,
-    partition = ".part",
-    thr = "max_sens_spec"
-  )
-
-egbm <- esm_gbm(
-  data = occs_pa3,
-  response = "pr_ab",
-  predictors = preds,
-  partition = ".part",
-  thr = "max_sens_spec"
-)
-
-esvm <- esm_svm(
-  data = occs_pa3,
-  response = "pr_ab",
-  predictors = preds,
-  partition = ".part",
-  thr = "max_sens_spec"
-)
-
-# 9. Predict models
-eglm <-
-  esm_glm(
-    data = hespero_pa3,
-    response = "pr_ab",
-    predictors = c("aet", "cwd", "tmx", "tmn"),
-    partition = ".part",
-    thr = "max_sens_spec"
-  )
-
-mpred <- sdm_predict(
-  models = list(mglm, mgbm, msvm),
-  pred = somevar,
-  con_thr = TRUE,
-  predict_area = ca
-)
-
-# 9. Summarize models
-merge_df <- sdm_summarize(models = list(mglm, mgbm, msvm))
-
-knitr::kable(
-  merge_df %>% dplyr::select(
-    model,
-    AUC = AUC_mean,
-    TSS = TSS_mean,
-    JACCARD = JACCARD_mean,
-    BOYCE = BOYCE_mean,
-    IMAE = IMAE_mean
-  )
-)
-
-#' Predict models
-
-mpred <- sdm_predict(
-  models = list(mglm, mgbm, msvm),
-  pred = vars,
-  con_thr = TRUE,
-  predict_area = ca
-)
