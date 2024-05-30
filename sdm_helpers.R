@@ -773,7 +773,7 @@ create_biased_bg_pts <- function(
   return(occs_p)
 }
 
-#'@description Function to conduct cluster analysis on the predictors
+#' @description Function to conduct cluster analysis on the predictors
 #' based on the correlation threshold. A sample_size is used to reduce
 #' the time taken to perform the cluster analysis.
 #' @param data A list of  predictors that have been z-score
@@ -785,21 +785,21 @@ create_biased_bg_pts <- function(
 cluster_analysis <- function(data, sample_size, mincor, categorical_vars) {
   # Perform cluster analysis
   tryCatch(
-      {
-        sample <- terra::spatSample(data,
-          size = sample_size, method = "regular",
-          as.df = TRUE, na.rm = TRUE, values = TRUE,
-          xy = TRUE
-        )
+    {
+      sample <- terra::spatSample(data,
+        size = sample_size, method = "regular",
+        as.df = TRUE, na.rm = TRUE, values = TRUE,
+        xy = TRUE
+      )
 
-        # Keep all columns except 1:2 and cat_cols
-        ccres <- klaR::corclust(sample[,-c(1:2)])
-      },
-      error = function(e) {
-        message("An error occurred: ", e$message)
-        message("Please increase the sample_size.")
-      }
-    )
+      # Keep all columns except 1:2 and cat_cols
+      ccres <- klaR::corclust(sample[, -c(1:2)])
+    },
+    error = function(e) {
+      message("An error occurred: ", e$message)
+      message("Please increase the sample_size.")
+    }
+  )
   # Create hierarchical cluster tree based correlation threshold
   cluster_dt <- klaR::cvtree(ccres, mincor = mincor)
   vars <- rownames(cluster_dt$correlations)
@@ -834,29 +834,45 @@ cluster_analysis <- function(data, sample_size, mincor, categorical_vars) {
 #' @return A list containing data frames of variable combinations for each
 #' cluster count
 
+library(dplyr)
+library(purrr)
+
+# Sample data frame
+df <- data.frame(
+  var = c("A", "B", "C", "D", "E", "F"),
+  cluster = c(1, 1, 2, 2, 3, 3)
+)
+
+# Function to generate combinations
 generate_combinations <- function(df) {
   # Ensure the data frame is sorted by cluster
   df <- dplyr::arrange(df, cluster)
-  
+
   # Split the data frame by cluster
-  split_df <- split(df, df$cluster)
-  
-  # Filter out empty lists from split_df
-  split_df <- split_df[sapply(split_df, nrow) > 0]
-  
-  # Generate all combinations
-  all_combinations <- list()
-  
-  # Generate combinations of varying lengths (1 to max(cluster))
-  max_cluster <- max(df$cluster)
-  for (i in 1:max_cluster) {
-    combs <- expand.grid(lapply(split_df[1:min(i, length(split_df))], function(x) x$var), stringsAsFactors = FALSE)
-    all_combinations <- append(all_combinations, list(combs))
+  split_df <- split(df$var, df$cluster)
+
+  # Get unique clusters
+  unique_clusters <- unique(df$cluster)
+
+  # Helper function to generate all valid combinations
+  generate_valid_combinations <- function(vars_by_cluster) {
+    combs <- list()
+    for (i in 1:length(vars_by_cluster)) {
+      cluster_combinations <- combn(seq_along(vars_by_cluster), i, simplify = FALSE)
+      for (cluster_comb in cluster_combinations) {
+        valid_comb <- do.call(expand.grid, vars_by_cluster[cluster_comb])
+        combs <- append(combs, list(valid_comb))
+      }
+    }
+    combs
   }
-  
+
+  # Generate all valid combinations of variables from different clusters
+  all_combinations <- generate_valid_combinations(split_df)
+
   # Combine all combinations into a single data frame
-  final_combinations <- dplyr::bind_rows(all_combinations)
-  
+  final_combinations <- purrr::map_dfr(all_combinations, dplyr::as_tibble)
+
   return(final_combinations)
 }
 
@@ -865,7 +881,7 @@ generate_combinations <- function(df) {
 #' @param part_data A list of partitioned data presence-background data.
 #' @param env_layer The list of predictors to extract.
 #' @param bg_method The method used to sample the background points: random,
-#' thicken, or biased: target_group, pop_density, distance_roads, or 
+#' thicken, or biased: target_group, pop_density, distance_roads, or
 #' distance_rails.
 #' @param species The species name.
 
@@ -903,7 +919,7 @@ create_testing_set <- function(path, extent, species) {
   vmi <- unique(vmi[, .(x = lon, y = lat, pr_ab = p_a)])
   vmi <- vmi[, .(pr_ab = max(pr_ab)), by = .(x, y)]
   test_data <- data.table::rbindlist(list(neon, vmi), fill = TRUE, use.names = TRUE)
-  test_data <- test_data[,.(x, y, pr_ab)]
+  test_data <- test_data[, .(x, y, pr_ab)]
   test_data <- terra::vect(test_data, crs = terra::crs(extent), geom = c("x", "y"))
   test_data <- terra::crop(test_data, extent)
   test_data$x <- terra::crds(test_data)[, 1]
@@ -939,12 +955,12 @@ splitpts4sdm <- function(data) {
   data <- tibble::as_tibble(data)
   #' Train on .part == 1:4; test on .part == 5
   no_parts <- length(unique(data$.part))
-  data <- data[data$.part %in% 1:(no_parts - 1),]
+  data <- data[data$.part %in% 1:(no_parts - 1), ]
   #' Pull out presence-absence data
   response <- data[data$pr_ab == 1, ]
   #' Add id column
   response$id <- 1:nrow(response)
   #' Pull out background data; pr_ab == 0
-  bg <- data[data$pr_ab == 0,]
+  bg <- data[data$pr_ab == 0, ]
   return(list(response = response, bg = bg))
 }
