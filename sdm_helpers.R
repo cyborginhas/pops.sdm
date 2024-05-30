@@ -964,3 +964,34 @@ splitpts4sdm <- function(data) {
   bg <- data[data$pr_ab == 0, ]
   return(list(response = response, bg = bg))
 }
+
+
+#' @description Function to aggregate transformed predictors by a factor of 3
+#' to speed up the analysis.
+#' @param predictor A cropped and transformed predictor.
+#' @param factor The factor to aggregate the predictor by.
+
+aggregate_predictor <- function(predictor, factor) {
+  s <- Sys.time()
+  fn <- basename(terra::sources(predictor))
+  fn <- gsub(".tif", "_agg.tif", fn)
+  dt <- terra::datatype(predictor)
+  agg_outpath <- paste0(
+      getwd(),
+      "/flexsdm_results/1_Inputs/2_Predictors/1_Current/cropped/transformed/aggregated/" # nolint
+    )
+    dir.create(agg_outpath, showWarnings = FALSE, recursive = TRUE)
+  if (dt != "INT1U") {
+    predictor <- terra::aggregate(predictor, fact = factor, fun = "mean")
+    terra::writeRaster(predictor, paste0(
+      agg_outpath, fn
+    ), overwrite = TRUE, datatype = "FLT4S", gdal = "COMPRESS=ZSTD")
+  } else {
+    predictor <- NULL
+  }
+  t <- Sys.time() - s
+  print(paste0(
+    "Time taken to aggregate predictor: ", fn, " ", t, " ", attr(t, "units")
+  ))
+  return(predictor)
+}
