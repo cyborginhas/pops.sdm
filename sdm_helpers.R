@@ -315,11 +315,13 @@ get_categorical_rasters <- function(predictor) {
 #' The function returns the partitioned data.
 #' @param occs The filtered species occurrence data.
 #' @param env_layer The list of predictors.
+#' @param species The species name.
+#' @param d The distance to apply for geographic filtering.
 
-spatial_block_partition <- function(occs, extent, env_layer, species) {
+spatial_block_partition <- function(occs, env_layer, species, d) {
   s <- Sys.time()
   # Partition the data
-  part_data <- flexsdm::part_sblock(
+  part_data <- part_sblock_upd(
     env_layer = env_layer,
     data = occs,
     x = "x",
@@ -328,11 +330,11 @@ spatial_block_partition <- function(occs, extent, env_layer, species) {
     n_part = 4,
     min_res_mult = 3,
     max_res_mult = 200,
-    num_grids = 30,
+    num_grids = 20,
     prop = 0.5,
     min_occ = 10
   )
-
+  t <- Sys.time() - s
   # Write out the partitioned data
   # Create outpath
   part_path <- paste0(
@@ -343,7 +345,6 @@ spatial_block_partition <- function(occs, extent, env_layer, species) {
 
   # Write out the partitioned data
   names(part_data) <- paste0(names(part_data), "_filtgeo_", d, "m2")
-  d <- unique(occs$d)
   part_data[[2]]$d <- d
   # Best partition
   data.table::fwrite(part_data[[2]], paste0(
@@ -374,11 +375,19 @@ spatial_block_partition <- function(occs, extent, env_layer, species) {
 #' associated spatial block grid.
 #' @param species The species name.
 #' associated grid.
+#' @param res The resolution of the base raster.
 
-create_random_bg_pts <- function(partitioned_data, species) {
+create_random_bg_pts <- function(partitioned_data, species, res) {
   occs_p <- partitioned_data[[1]]
-  grid_env <- partitioned_data[[3]]
+  grid_env <- partitioned_data[[2]]
   d <- unique(occs_p$d)
+  
+  if (res == 30) {
+    factor <- floor(terra::res(grid_env)[1] / terra::res(base)[1] / 5)
+    grid_env <- terra::disagg(grid_env, factor)
+  } else {
+    grid_env <- terra::resample(grid_env, base, method = "near")
+  }
 
   bg_pts <- flexsdm::sample_background(
     data = occs_p,
@@ -414,7 +423,6 @@ create_random_bg_pts <- function(partitioned_data, species) {
   return(occs_p)
 }
 
-
 #' @description A function to create thickened background points data
 #' and write the data to the local output path.
 #' @param partitioned_data A list of partitioned data occurrences, and the
@@ -429,20 +437,20 @@ create_thickened_bg_pts <- function(
     base, res, species) {
   s <- Sys.time()
   occs_p <- partitioned_data[[1]]
+  d <- unique(occs_p$d)
+  occs_p <- occs_p[, .(pr_ab, x, y, .part)]
   grid_env <- partitioned_data[[2]]
 
   # Disaggregate the spatial block grid
 
   if (res == 30) {
-    factor <- floor(terra::res(grid_env)[1] / terra::res(base)[1] / 5)
+    factor <- floor(terra::res(grid_env)[1] / terra::res(base)[1] / 10)
     grid_env <- terra::disagg(grid_env, factor)
   } else {
     grid_env <- terra::resample(grid_env, base, method = "near")
   }
 
-  d <- unique(occs_p$d)
   no_parts <- length(unique(occs_p$.part))
-
   part_pts <- list()
   bg_pts <- list()
   grid_parts <- list()
@@ -451,8 +459,8 @@ create_thickened_bg_pts <- function(
     s <- Sys.time()
     part_pts[[i]] <- occs_p[occs_p$.part == i, ]
     grid_parts[[i]] <- terra::ifel(grid_env == i, 1, NA)
-    bg_pts[[i]] <- flexsdm::sample_background(
-      data = part_pts[[i]],
+    bg_pts[[i]] <- sample_bg_upd(
+      data = dplyr::tibble(part_pts[[i]]),
       x = "x",
       y = "y",
       n = length(part_pts[[i]]$x),
@@ -566,7 +574,7 @@ target_group_rbias_lyr <- function(path, extent, domain, res) {
     trees_crds <- as.matrix(trees[, .(longitude, latitude)])
 
     if (res == 30) {
-      base_extent <- terra::aggregate(extent, factor = 2)
+      base_extent <- terra::aggregate(extent, factor = 3)
     } else {
       base_extent <- extent
     }
@@ -681,9 +689,6 @@ human_factors_rbias_lyr <- function(path, extent, domain, rbias_type, res) {
     # Normalize bias file to between 0 and 1.
     min <- terra::global(hf, "min", na.rm = TRUE)$min
     hf <- terra::app(hf, function(x) x - min)
-
-    # Normalize bias file to between 0 and 1.
-    hf <- spatialEco::raster.transformation(hf, trans = "norm")
 
     # Add 0.1 to the bias file to avoid 0 values
     hf <- hf + 0.1
