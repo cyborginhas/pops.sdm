@@ -8,7 +8,7 @@ library(parallel)
 library(spatialEco)
 
 path <- "Z:/pops_pesthostuse/pops.sdm/Data/"
-setwd("C:/Users/blaginh/Desktop/sdm_truncated_extent/")
+setwd("D:/blaginh/sdm_full_extent/")
 domain <- "USA"
 extent <- "D:/blaginh/sdm_full_extent/misc/ext25.gpkg"
 res <- 30
@@ -19,9 +19,10 @@ flexsdm::sdm_directory(
 )
 
 #' 3. Create base raster for the study extent
-source("C:/Users/blaginh/Documents/GitHub/pops.sdm/sdm_helpers.R")
-source("C:/Users/blaginh/Documents/Github/pops.sdm/get_envi_chunked.R") # get_topo_global # nolint
-source("C:/Users/blaginh/Documents/Github/pops.sdm/raster_base.R") # base_raster at correct resolution and extent # nolint
+source("C:/Users/blaginh/Documents/GitHub/pops.sdm/pops.sdm/sdm_helpers.R")
+source("C:/Users/blaginh/Documents/Github/pops.sdm/pops.sdm/get_envi_chunked.R") # get_topo_global # nolint
+source("C:/Users/blaginh/Documents/Github/pops.sdm/pops.sdm/raster_base.R") # base_raster at correct resolution and extent # nolint
+source("C:/Users/blaginh/Documents/Github/pops.sdm/pops.sdm/part_sblock.R") # nolint
 
 res <- fix_resolution(res, domain)
 base <- crop_base_raster(domain, res, path, extent)
@@ -100,6 +101,21 @@ for (i in seq_along(cropped_predictors)) {
 
 env_layer <- rast(env_layer)
 
+# Pull in aggregate data
+fn <- subset_files[grep("nlcd", subset_files, invert = TRUE)]
+fn <- basename(fn)
+fn <- paste0(pred_cropped_path, "/transformed/aggregated/", fn)
+fn <- gsub(".tif", "_cropped_zscore_agg.tif", fn)
+
+if (!all(file.exists(fn))) {
+  for (i in seq_along(cropped_predictors)) {
+    cropped_predictors[[i]] <- aggregate_predictor(cropped_predictors[[i]], factor = 10)
+  }
+} else {
+  agg_predictors <- lapply(fn, rast)
+  }
+agg_predictors <- rast(agg_predictors)
+
 # Partition the filtered data into spatial blocks & write out
 part_dt_files <- paste0(getwd(), "/flexsdm_results/1_Inputs/1_Occurrences/partitioned/",
                             species, "_part_data_filtgeo", cellsizes, "m2.csv")
@@ -113,7 +129,7 @@ partitioned_data <- list()
 if(!all(file.exists(part_dt_files))) {
   for (i in seq_along(filt_geo)) {
     partitioned_data[[i]] <- spatial_block_partition(
-      filt_geo[[i]], extent = base, env_layer, species
+      filt_geo[[1]], extent = base, agg_predictors, species
     )
   }
 } else {
