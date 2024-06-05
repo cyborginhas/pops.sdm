@@ -23,6 +23,7 @@ source("C:/Users/blaginh/Documents/GitHub/pops.sdm/pops.sdm/sdm_helpers.R")
 source("C:/Users/blaginh/Documents/Github/pops.sdm/pops.sdm/get_envi_chunked.R") # get_topo_global # nolint
 source("C:/Users/blaginh/Documents/Github/pops.sdm/pops.sdm/raster_base.R") # base_raster at correct resolution and extent # nolint
 source("C:/Users/blaginh/Documents/Github/pops.sdm/pops.sdm/part_sblock.R") # nolint
+source("C:/Users/blaginh/Documents/Github/pops.sdm/pops.sdm/sample_background.R") # nolint
 
 res <- fix_resolution(res, domain)
 base <- crop_base_raster(domain, res, path, extent)
@@ -114,7 +115,34 @@ if (!all(file.exists(fn))) {
 } else {
   agg_predictors <- lapply(fn, rast)
   }
+
 agg_predictors <- rast(agg_predictors)
+
+## #' Reduce number of agg_predictors to consider using cluster
+## #' analysis to remove collinearity
+## categorical_lyrs <- list()
+## for (i in seq_along(cropped_predictors)) {
+##   categorical_lyrs[[i]] <- get_categorical_rasters(cropped_predictors[[i]])
+## }
+## categorical_lyrs <- rast(categorical_lyrs)
+## clusters <- cluster_analysis(env_layer, 200000, 0.85, categorical_lyrs)
+## clusters <- clusters[var != "NLCD Land Cover Class",]
+
+
+## #' Keep one predictor from each cluster
+## selected_vars <- list()
+## clusterids <- unique(clusters$cluster)
+
+## for (i in seq_along(clusterids)) {
+##   selected_vars[[i]] <- clusters[cluster == clusterids[i], ]$var[1]
+## }
+## selected_vars <- unlist(selected_vars)
+## # Pull out the selected predictors from agg_predictors
+## selected_predictors <- list()
+## for (i in seq_along(selected_vars)) {
+##   selected_predictors[[i]] <- agg_predictors[[selected_vars[i]]]
+## }
+## selected_predictors <- rast(selected_predictors)
 
 # Partition the filtered data into spatial blocks & write out
 part_dt_files <- paste0(getwd(), "/flexsdm_results/1_Inputs/1_Occurrences/partitioned/",
@@ -127,9 +155,9 @@ partitioned_raster <- list()
 partitioned_data <- list()
 
 if(!all(file.exists(part_dt_files))) {
-  for (i in seq_along(filt_geo)) {
+  for (i in 1:length(filt_geo)) {
     partitioned_data[[i]] <- spatial_block_partition(
-      filt_geo[[1]], extent = base, agg_predictors, species
+      filt_geo[[i]], selected_predictors, species, d = cellsizes[i]
     )
   }
 } else {
@@ -150,7 +178,7 @@ random_pts <- list()
 if (!all(file.exists(random_files))) {
   for (i in seq_along(partitioned_data)) {
     random_pts[[i]] <- create_random_bg_pts(
-      partitioned_data[[i]], species
+      partitioned_data[[i]], species, res
     )
   }
 } else {
@@ -173,6 +201,16 @@ for (i in seq_along(partitioned_data)) {
   thickened_pts <- lapply(thickened_files, fread)
 }
 
+partitioned_dt <- list()
+partitioned_raster <- list()
+partitioned_data <- list()
+
+for (i in seq_along(part_dt_files)) {
+    partitioned_dt[[i]] <- fread(part_dt_files[i])
+    partitioned_raster[[i]] <- rast(part_raster_files[i])
+    partitioned_data[[i]] <- list(partitioned_dt[[i]], partitioned_raster[[i]])
+  }
+
 #' Background points with target groups as a bias
 rbias_type <- "target_group"
 rbias_lyr <- target_group_rbias_lyr(path, extent = base, domain, res)
@@ -180,12 +218,12 @@ tg_files <- paste0(getwd(),
                           "/flexsdm_results/1_Inputs/1_Occurrences/background/", rbias_type, "/", #nolint
                           species,"_", rbias_type, "_bg_pts_filtgeo_", cellsizes, "m2.csv")
 
-
 if (!all(file.exists(tg_files))) {
   tg_pts <- list()
   for (i in seq_along(partitioned_data)) {
     tg_pts[[i]] <- create_biased_bg_pts(
-      partitioned_data[[i]], rbias_lyr, rbias_type, species
+      partitioned_data[[i]], rbias, rbias_type, species, res,
+      extent = base
     )
   }
 } else {
@@ -201,11 +239,13 @@ pop_files <- paste0(getwd(),
                     rbias_type, "/", species, "_", rbias_type,
                     "_bg_pts_filtgeo_", cellsizes, "m2.csv")
 
+
 if (!all(file.exists(pop_files))) {
   pop_pts <- list()
   for (i in seq_along(partitioned_data)) {
     pop_pts[[i]] <- create_biased_bg_pts(
-      partitioned_data[[i]], rbias_lyr, rbias_type, species
+      partitioned_data[[i]], rbias_lyr, rbias_type, species,
+      res = res, extent = base
     )
   }
 } else {
@@ -213,9 +253,8 @@ if (!all(file.exists(pop_files))) {
 }
 
 #' Background points with dist2roads as a bias layer
-
 rbias_type <- "distance_roads"
-rbias_lyr <- human_factors_rbias_lyr(path, extent = base, domain, rbias_type,res)
+rbias_lyr <- human_factors_rbias_lyr(path, extent = base, domain, rbias_type, res)
 
 roads_files <- paste0(getwd(),
                           "/flexsdm_results/1_Inputs/1_Occurrences/background/", #nolint
@@ -226,7 +265,8 @@ if (!all(file.exists(roads_files))) {
   roads_pts <- list()
   for (i in seq_along(partitioned_data)) {
     roads_pts[[i]] <- create_biased_bg_pts(
-      partitioned_data[[i]], rbias_lyr, rbias_type, species
+      partitioned_data[[i]], rbias_lyr, rbias_type, species, 
+      res, extent = base
     )
   }
 } else {
@@ -246,7 +286,8 @@ if (!all(file.exists(rails_files))) {
   rails_pts <- list()
   for (i in seq_along(partitioned_data)) {
     rails_pts[[i]] <- create_biased_bg_pts(
-      partitioned_data[[i]], rbias_lyr, rbias_type, species
+      partitioned_data[[i]], rbias_lyr, rbias_type, species,
+      res, extent = base
     )
   }
 } else {
@@ -259,12 +300,13 @@ for (i in seq_along(cropped_predictors)) {
   categorical_lyrs[[i]] <- get_categorical_rasters(cropped_predictors[[i]])
 }
 categorical_lyrs <- rast(categorical_lyrs)
-clusters <- cluster_analysis(env_layer, 200000, 0.6, categorical_lyrs)
+clusters <- cluster_analysis(env_layer, 200000, 0.7, categorical_lyrs)
 clusters[var == "NLCD Land Cover Class",]$var <- "landcoverrc"
 combos <- generate_combinations(clusters)
 
 #' 10. Extract predictors for model fitting
 bg_method <- c("random", "thicken", "target_group", "pop_density", "distance_roads", "distance_rails")
+
 fn <- vector("list", length(bg_method))
 for (i in seq_along(bg_method)) {
   fn[[i]] <- paste0(getwd(), "/flexsdm_results/1_Inputs/1_Occurrences/background/", 
@@ -300,6 +342,7 @@ pop_pts_wdata <- lapply(fn[grep("pop_density", fn)], fread)
 roads_pts_wdata <- lapply(fn[grep("distance_roads", fn)], fread)
 rails_pts_wdata <- lapply(fn[grep("distance_rails", fn)], fread)
 }
+
 
 #' 12. Fit models
 #' Tune hyperparameters for maxent
