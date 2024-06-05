@@ -567,6 +567,11 @@ target_group_rbias_lyr <- function(path, extent, domain, res) {
 
     # Delete the original tree data
     file.remove(paste0(tg_outpath, "tree_observations_uscanada.csv"))
+    
+    trees <- data.table::fread(paste0(
+      tg_outpath,
+      "tree_observations_cropped.csv"
+    ))
 
     # Calculate scale for the tree data
     scale <- 1 / sum(trees$count)
@@ -574,16 +579,20 @@ target_group_rbias_lyr <- function(path, extent, domain, res) {
     trees_crds <- as.matrix(trees[, .(longitude, latitude)])
 
     if (res == 30) {
-      base_extent <- terra::aggregate(extent, factor = 3)
+      base_extent <- terra::aggregate(extent, fact = 6)
+      base_extent <- terra::app(base_extent, function(x) ifelse(is.na(x), 0, x))
+      ncols <- ncol(base_extent)
+      nrows <- nrow(base_extent)
+      # make tiles
     } else {
       base_extent <- extent
     }
-
-    # Do a 2d kernel density estimation
-    target_density <- ks::kde(trees_crds,
-      w = trees$scale,
-      gridsize = c(nrow(base_extent), ncol(base_extent))
-    )
+    target_density <- ks::kde(as.matrix(trees[, c("longitude", "latitude")]), # no lint
+          w = trees$scale, gridsize = c(
+            nrow(base_extent),
+            ncol(base_extent)
+          )
+        )
 
     target_raster <- base_extent
     terra::values(target_raster) <- target_density$estimate
@@ -603,7 +612,6 @@ target_group_rbias_lyr <- function(path, extent, domain, res) {
     } else {
       target_raster <- target_raster
     }
-
     terra::writeRaster(target_raster, paste0(
       tg_outpath,
       "TargetGroup_biasfile.tif"
@@ -664,6 +672,11 @@ human_factors_rbias_lyr <- function(path, extent, domain, rbias_type, res) {
     })))
     subset_files <- hf_files[grep(res, hf_files)]
     hf <- terra::rast(subset_files)
+    # If the resolution is 30m, aggregate the population density to 100m
+    if (res == 30) {
+      hf <- terra::aggregate(hf, fact = 4)
+    } else {
+      hf <- hf}
     # Crop the population density to the extent of interest and write it out
     hf <- terra::crop(hf[[1]], extent, filename = paste0(
       hf_outpath, rbias_type, "_original_cropped.tif"
@@ -689,7 +702,7 @@ human_factors_rbias_lyr <- function(path, extent, domain, rbias_type, res) {
     # Normalize bias file to between 0 and 1.
     min <- terra::global(hf, "min", na.rm = TRUE)$min
     hf <- terra::app(hf, function(x) x - min)
-
+    hf <- spatialEco::raster.transformation(hf, trans = "norm")
     # Add 0.1 to the bias file to avoid 0 values
     hf <- hf + 0.1
     # Convert NA values to 0
@@ -717,19 +730,29 @@ human_factors_rbias_lyr <- function(path, extent, domain, rbias_type, res) {
 #' distance rasters.
 #' @param rbias_type The type of bias file to use. Options are "target_group",
 #' "pop_density", "distance_roads", or "distance_rails".
+#' @param extent The base raster cropped to the extent of interest.
 #' @param species The species name.
 #' associated grid.
+#' @param res The resolution of the base raster.
+#' @param extent
 
 
 create_biased_bg_pts <- function(
     partitioned_data, rbias_lyr,
-    rbias_type, species) {
-  s <- Sys.time()
+    rbias_type, species, res, extent) {
+  s0 <- Sys.time()
   occs_p <- partitioned_data[[1]]
   grid_env <- partitioned_data[[2]]
 
   # Disaggregate the spatial block grid
+  if (res == 30) {
+    #factor <- floor(terra::res(grid_env)[1] / terra::res(extent)[1] / 10)
+    grid_env <- terra::resample(grid_env, rbias_lyr, method = "near")
+  } else {
+    grid_env <- terra::resample(grid_env, rbias_lyr, method = "near")
+  }
   d <- unique(occs_p$d)
+  occs_p <- occs_p[, .(pr_ab, x, y, .part)]
   no_parts <- length(unique(occs_p$.part))
 
   part_pts <- list()
@@ -737,10 +760,11 @@ create_biased_bg_pts <- function(
   grid_parts <- list()
 
   for (i in 1:no_parts) {
+    s <- Sys.time()
     part_pts[[i]] <- occs_p[occs_p$.part == i, ]
     grid_parts[[i]] <- terra::ifel(grid_env == i, 1, NA)
     bg_pts[[i]] <- flexsdm::sample_background(
-      data = part_pts[[i]],
+      data = dplyr::tibble(part_pts[[i]]),
       x = "x",
       y = "y",
       n = length(part_pts[[i]]$x),
@@ -750,6 +774,11 @@ create_biased_bg_pts <- function(
       rbias = rbias_lyr
     )
     bg_pts[[i]]$.part <- i
+    t <- Sys.time() - s
+    print(paste0(
+      "Time taken to create background points for part ", i, ": ",
+      t, " ", attr(t, "units")
+    ))
   }
 
   bg_pts <- data.table::rbindlist(bg_pts, use.names = TRUE, fill = TRUE)
@@ -770,9 +799,9 @@ create_biased_bg_pts <- function(
   data.table::fwrite(occs_p, paste0(
     bg_path, species, "_", rbias_type, "_bg_pts_filtgeo_", d, "m2.csv"
   ), row.names = FALSE)
-  t <- Sys.time() - s
+  t0 <- Sys.time() - s0
   print(paste0(
-    "Time taken to create background points: ", t, " ", attr(t, "units"),
+    "Time taken to create background points: ", t0, " ", attr(t0, "units"),
     " for ", length(occs_p$x), " points for filtgeo", d, "m2"
   ))
   return(occs_p)
@@ -906,6 +935,7 @@ append_env_data <- function(part_data, env_layer, bg_method, species) {
   print(paste0(
     "Time taken to append predictor data: ", t, " ", attr(t, "units")
   ))
+  terra::tmpFiles(orphan = TRUE, old = TRUE, remove = TRUE)
   return(part_data)
 }
 
