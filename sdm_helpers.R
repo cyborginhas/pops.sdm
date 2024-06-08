@@ -989,8 +989,8 @@ splitpts4sdm <- function(data) {
   #' Convert to tibble
   data <- tibble::as_tibble(data)
   #' Train on .part == 1:4; test on .part == 5
-  no_parts <- length(unique(data$.part))
-  data <- data[data$.part %in% 1:(no_parts - 1), ]
+  #no_parts <- length(unique(data$.part))
+  #data <- data[data$.part %in% 1:(no_parts - 1), ]
   #' Pull out presence-absence data
   response <- data[data$pr_ab == 1, ]
   #' Add id column
