@@ -409,27 +409,35 @@ str(max_t1$model)
 agg_base <- terra::aggregate(base, fact = 4000)
 # Set everything to 1 
 
-dir.create("C:/Users/blaginh/Desktop/maximize/tiles/", showWarnings = FALSE, recursive = TRUE)
+dir.create("C:/Users/blaginh/Desktop/maximize/tiles/tiles/", showWarnings = FALSE, recursive = TRUE)
 tiles <- terra::makeTiles(best_predictors, agg_base,
-                   "C:/Users/blaginh/Desktop/maximize/tiles/bestpredictors_.tif", na.rm = TRUE, 
+                   "C:/Users/blaginh/Desktop/maximize/tiles/tiles/bestpredictors_.tif", na.rm = TRUE, 
                    wopt = list(gdal = "COMPRESS=ZSTD"))
 
 # Read in one tile
-tile <- terra::rast("C:/Users/blaginh/Desktop/maximize/tiles/bestpredictors_1.tif")
+tile <- terra::rast("C:/Users/blaginh/Desktop/maximize/tiles/tiles/bestpredictors_1.tif")
 
 dir.create("C:/Users/blaginh/Desktop/maximize/output/", showWarnings = FALSE, recursive = TRUE)
 
 
-# a list of models
-s <- Sys.time()
-ind_p <- sdm_predict(
-  nchunk = 1,
-  models = max_t1,
-  pred = tile,
-  thr = c("max_sens_spec"),
-  con_thr = FALSE,
-  predict_area = NULL
-)
-t <- Sys.time() - s
+tiles <- list.files("C:/Users/blaginh/Desktop/maximize/tiles/tiles/", pattern = ".tif", full.names = TRUE, na.rm = TRUE)
+tiles <- lapply(tiles, terra::rast)
+basename(sources(tiles[[1]]))
 
-writeRaster(ind_p$max, "C:/Users/blaginh/Desktop/maximize/Ailanthus_altissima_ind_p_1.tif")
+# a list of models
+for (i in seq_along(tiles)) {
+    s <- Sys.time()
+    ind_p <- sdm_predict(
+    nchunk = 1,
+    models = max_t1,
+    pred = tiles[[i]],
+    thr = c("max_sens_spec"),
+    con_thr = FALSE,
+    predict_area = NULL
+  )
+  fn <- basename(sources(tiles[[i]]))
+  writeRaster(ind_p$max, paste0("C:/Users/Desktop/maximize/output/Ailanthus_altissima_prediction_",fn))
+  t <- Sys.time() - s
+  print(t)
+  tmpFiles(orphan = TRUE, old = TRUE, remove = TRUE)
+}
