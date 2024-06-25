@@ -4,49 +4,20 @@ library(terra)
 library(data.table)
 
 # Load data
-occs_file <- "D:/blaginh/sdm_full_extent/flexsdm_results/1_Inputs/1_Occurrences/background/target_group/Ailanthus_altissima_target_group_bg_pts_filtgeo_120m2_wpreds.csv"
+occs_file <- "~/Desktop/maximize/Ailanthus_altissima_target_group_bg_pts_filtgeo_210m2_wpreds.csv"
+occs <- fread(occs_file)
 
-# Copy to "C:/Users/blaginh/Desktop/maximize/"
-#file.copy(occs_file, "C:/Users/blaginh/Desktop/maximize/")
-occs_file <- "C:/Users/blaginh/Desktop/maximize/Ailanthus_altissima_target_group_bg_pts_filtgeo_120m2_wpreds.csv"
-occs_120_tg_data <- fread(occs_file)
-
-# Set names .part to "part"
-occs_120_tg_data <- occs_120_tg_data[, part := .part]
-
-# Use setnames to change NLCD Land Cover Class to landcoverrc
-setnames(occs_120_tg_data, "NLCD Land Cover Class", "landcoverrc")
-
-# Convert "NLCD Land Cover Class" to "landcoverrc"
-occs_120_tg_data <- occs_120_tg_data[, .(
-    pr_ab, x, y, part, d, elevation, slope, aspect,
-    bio19, bio15, evi, par, clay_0_5, silt_0_5, ph_0_5, theta_s_0_5, landcoverrc
-)]
-
-# Only keep complete cases
-occs_120_tg_data <- occs_120_tg_data[complete.cases(occs_120_tg_data), ]
-
-# Convert pr_ab 0 to NA
-occs_120_tg_data$pr_ab[occs_120_tg_data$pr_ab == 0] <- NA
-
-# Convert pr_ab to RV
-setnames(occs_120_tg_data, "pr_ab", "RV")
+# Rename .part and NLCD Land Cover Class
+setnames(occs, "NLCD Land Cover Class", "landcoverrc")
+setnames(occs, ".part", "part")
+setnames(occs, "pr_ab", "RV")
 
 # Convert landcoverrc to factor
-occs_120_tg_data$landcoverrc <- as.factor(occs_120_tg_data$landcoverrc)
+occs$landcoverrc <- as.factor(occs$landcoverrc)
 
-# Filter by part column
-occs_part <- list()
-for (i in 1:4) {
-    occs_part[[i]] <- occs_120_tg_data[part == i]
-}
+# Drop d, x, y
+occs[, c("d", "x", "y") := NULL]
 
-# Drop d, x, y, and part in for loop
-for (i in 1:4) {
-    occs_part[[i]] <- occs_part[[i]][, .(RV, elevation, slope, aspect, bio19, bio15, evi, par, clay_0_5, silt_0_5, ph_0_5, theta_s_0_5, landcoverrc)]
-}
-
-# Partition
 # Define a function to perform variable selection and model fitting
 perform_variable_selection <- function(occurrence) {
     # Derive variables
@@ -61,6 +32,31 @@ perform_variable_selection <- function(occurrence) {
     # Return the selected variables and selected dependent variables
     return(list(occs_EVselect = occs_EVselect, occs_dvs_select = occs_dvs_select, occs_dvs = occs_dvs))
 }
+
+# Number of parts
+nparts <- length(unique(occs$part))
+nparts <- seq(1:nparts)
+
+create_cv_partitions <- function(nparts) {
+  partitions <- matrix(nrow = nparts, ncol = 2)
+  
+  for (i in 1:nparts) {
+    training <- paste(setdiff(1:nparts, i), collapse = ",")
+    testing <- as.character(i)
+    partitions[i,] <- c(training, testing)
+  }
+  
+  colnames(partitions) <- c("Training", "Testing")
+  return(partitions)
+}
+
+partitions <- create_cv_partitions(4)
+
+
+training <- occs[part != partitions[1,2]]
+testing <- occs[part == partitions[1,2]]
+cv <- list(training = training, testing = testing)
+
 
 
 # Call the function with the occurrence data
@@ -228,3 +224,5 @@ stack123 <- create_stack(varimp123, model123, best_predictors, "part123", part12
 stack134 <- create_stack(varimp134, model134, best_predictors, "part134", part134_select$occs_dvs_select)
 stack124 <- create_stack(varimp124, model124, best_predictors, "part124", part124_select$occs_dvs_select)
 stack234 <- create_stack(varimp234, model234, best_predictors, "part234", part234_select$occs_dvs_select)
+
+
